@@ -1,0 +1,23 @@
+{
+  "app": {
+    "title": "angimex_miniapp",
+    "textColor": "white",
+    "headerColor": "#ffffff",
+    "statusBar": "transparent",
+    "actionBarHidden": true,
+    "hideAndroidBottomNavigationBar": false,
+    "hideIOSSafeAreaBottom": true,
+    "selfControlLoading": false
+  },
+  "listCSS": [],
+  "listSyncJS": [],
+  "listAsyncJS": [],
+  "template": {
+    "name": "zaui-market",
+    "apiUrl": "",
+    "oaIDtoOpenChat": "4318657068771012646",
+    "logoUrl": "https://photo-logo-mapps.zadn.vn/284fadf20bb7e2e9bba6.jpg",
+    "shopName": "Tiệm Tí Hon",
+    "shopAddress": "Z06 Số 13, Tân Thuận Đông, Quận 7, Hồ Chí Minh"
+  }
+}

@@ -1,0 +1,56 @@
+[
+  {
+    "id": 1,
+    "categoryId": 1,
+    "name": "Gạo San Sẻ Yêu Thương",
+    "price": 60000,
+    "originalPrice": 69900,
+    "image": "https://angimexfood.com/uploads/sanpham/gao-san-se-yeu-thuong-1780448979-ewcmr.png",
+    "detail": "Gạo Trắng được trồng phổ biến tại khắp các vùng thuộc khu vực ĐBSCL. Gạo Trắng là loại gạo thông dụng với mức giá phổ thông phù hợp cho mọi bữa ăn."
+  },
+  {
+    "id": 2,
+    "categoryId": 1,
+    "name": "Gạo Thượng Hạng",
+    "price": 67900,
+    "originalPrice": 69900,
+    "image": "https://angimexfood.com/uploads/sanpham/gao-thuong-hang-1691464877-fkdwd.png",
+    "detail": "Gạo An Gia Thượng Hạng là sản phẩm gạo cao cấp nhất của Angimex Food được tuyển chọn kỹ lưỡng qua những giống lúa đặc sản, canh tác theo qui trình nghiêm ngặt tạo ra những hạt gạo chuẩn Việt, mang lại bữa cơm thơm ngon, đậm đà hương vị, an toàn sức khỏe cho mọi nhà."
+  },
+  {
+    "id": 3,
+    "categoryId": 1,
+    "name": "Gạo Lúa Tôm",
+    "price": 67900,
+    "originalPrice": 69900,
+    "image": "https://angimexfood.com/uploads/sanpham/gao-lua-tom-1691464031-2rwhv.png",
+    "detail": "Gạo Lúa Tôm An Gia là sản phẩm thượng hạng, được trồng từ giống lúa chất lượng cao trên những vùng đất luân canh lúa - tôm tự nhiên vốn giàu chất dinh dưỡng, hạt gạo thành phẩm được sản xuất chế biến dưới các quy trình kiểm soát nghiêm ngặt, đem lại bữa cơm dinh dưỡng, an toàn, tốt cho sức khỏe của người tiêu dùng."
+  },
+  {
+    "id": 4,
+    "categoryId": 1,
+    "name": "Gạo Tấm Thơm",
+    "price": 67900,
+    "originalPrice": 69900,
+    "image": "https://angimexfood.com/uploads/sanpham/gao-tam-thom-1642389294-to23a.png",
+    "detail": "Gạo nhãn hiệu Mục Đồng được tuyển chọn kỹ lưỡng, qua nhiều công đoạn bảo quản chế biến, kiểm nghiệm chặt chẽ, luôn mang đến sự an toàn và hương vị thơm ngon cho mọi gia đình. Tấm Thơm là những hạt gạo bị vỡ trong quá trình xử lý, tấm không đều hạt nhưng được sử dụng nhiều nhất trong việc hòa trộn với nhiều loại gạo khác làm cho bữa ăn đậm phần đa vị."
+  },
+  {
+    "id": 5,
+    "categoryId": 1,
+    "name": "Gạo Thơm Hương Jasmine",
+    "price": 67900,
+    "originalPrice": 69900,
+    "image": "https://angimexfood.com/uploads/sanpham/gao-thom-huong-jasmine-1786346815-ogrow.png",
+    "detail": "Gạo cao cấp An Gia với chất lượng tuyệt hảo, tuyển chọn từ những giống lúa đặc sản, qua nhiều công đoạn bảo quản, chế biến, kiểm nghiệm chặt chẽ, sẽ mang lại bữa cơm thơm ngon và an toàn sức khỏe cho mọi gia đình."
+  },
+  {
+    "id": 6,
+    "categoryId": 1,
+    "name": "Gạo Sóc Thái",
+    "price": 67900,
+    "originalPrice": 69900,
+    "image": "https://angimexfood.com/uploads/sanpham/gao-soc-thai-1626929192-iwnnl.jpg",
+    "detail": "Gạo cao cấp An Gia với chất lượng tuyệt hảo, tuyển chọn từ những giống lúa đặc sản, qua nhiều công đoạn bảo quản, chế biến, kiểm nghiệm chặt chẽ, sẽ mang lại bữa cơm thơm ngon và an toàn sức khỏe cho mọi gia đình."
+  }
+]
