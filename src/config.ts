@@ -3,6 +3,7 @@ const CONFIG = {
     USER_INFO: "userInfo",
     DELIVERY: "delivery",
     SHIPPING_ADDRESS: "shippingAddress",
+    ORDER_NUM: "orderNum",
   },
 };
 

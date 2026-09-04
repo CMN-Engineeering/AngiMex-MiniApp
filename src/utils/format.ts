@@ -12,3 +12,13 @@ export function formatDistant(value: number) {
     maximumFractionDigits: 1,
   }).format(value)} km`;
 }
+
+export function formatShippingAddress(address: {
+  detail: string;
+  wardName: string;
+  provinceName: string;
+}) {
+  return [address.detail, address.wardName, address.provinceName]
+    .filter(Boolean)
+    .join(", ");
+}

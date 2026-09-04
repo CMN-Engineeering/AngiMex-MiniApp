@@ -38,8 +38,11 @@ export interface Location {
 }
 
 export interface ShippingAddress {
-  alias: string;
-  address: string;
+  provinceCode: string;
+  provinceName: string;
+  wardCode: string;
+  wardName: string;
+  detail: string;
   name: string;
   phone: string;
 }

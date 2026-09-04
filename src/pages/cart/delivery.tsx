@@ -15,6 +15,7 @@ import {
   selectedStationState,
   shippingAddressState,
 } from "@/state";
+import { formatShippingAddress } from "@/utils/format";
 import { useAtom, useAtomValue } from "jotai";
 import { Suspense } from "react";
 import DeliverySummary from "./delivery-summary";
@@ -41,8 +42,8 @@ function ShippingAddressSummary() {
     <DeliverySummary
       icon={<LocationMarkerLineIcon />}
       title="Địa chỉ nhận hàng"
-      subtitle={shippingAddress.alias}
-      description={shippingAddress.address}
+      subtitle={shippingAddress.name}
+      description={formatShippingAddress(shippingAddress)}
       linkTo="/shipping-address"
     />
   );

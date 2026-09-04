@@ -1,5 +1,6 @@
 import { HomeIcon, LocationMarkerLineIcon } from "@/components/vectors";
 import { Order } from "@/types";
+import { formatShippingAddress } from "@/utils/format";
 import { Icon, List } from "zmp-ui";
 import DeliverySummary from "../cart/delivery-summary";
 
@@ -17,8 +18,8 @@ function OrderInfo(props: { order: Order }) {
         <DeliverySummary
           icon={<LocationMarkerLineIcon />}
           title="Giao đến"
-          subtitle={props.order.delivery.alias}
-          description={props.order.delivery.address}
+          subtitle={props.order.delivery.name}
+          description={formatShippingAddress(props.order.delivery)}
         />
       )}
       {props.order.note && (

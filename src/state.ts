@@ -240,3 +240,8 @@ export const deliveryModeState = atomWithStorage<Delivery["type"]>(
   CONFIG.STORAGE_KEYS.DELIVERY,
   "shipping"
 );
+
+export const orderNumState = atomWithStorage<number>(
+  CONFIG.STORAGE_KEYS.ORDER_NUM,
+  0
+);
