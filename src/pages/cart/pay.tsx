@@ -67,11 +67,8 @@ export default function Pay() {
             >
               &times;
             </button>
-            <img
-              src="https://drive.google.com/file/d/18U9OlcZiXEZt08YU1NP5vNI7tOdkW8Qq/view?usp=sharing"
-              alt="Mã QR thanh toán"
-              className="mx-auto w-full max-w-xs"
-            />
+            <img src={`https://vietqr.app/img?acc=0766992331&bank=MBBank&amount=${totalAmount}&des=thanh%20toan%20don%20hang&template=compact`} alt='Mã QR thanh toán SePay' />
+
           </div>
         </div>
       )}
