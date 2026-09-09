@@ -29,6 +29,8 @@ import toast from "react-hot-toast";
 import { calculateDistance } from "./utils/location";
 import { formatDistant } from "./utils/format";
 import CONFIG from "./config";
+import { backendRequest } from "@/utils/backend";
+import { getUserID } from "zmp-sdk";
 
 export const userInfoKeyState = atom(0);
 
@@ -225,14 +227,50 @@ export const shippingAddressState = atomWithStorage<
 >(CONFIG.STORAGE_KEYS.SHIPPING_ADDRESS, undefined);
 
 export const ordersState = atomFamily((status: OrderStatus) =>
-  atomWithRefresh(async () => {
-    // Phía tích hợp thay đổi logic filter server-side nếu cần:
-    // const serverSideFilteredData = await requestWithFallback<Order[]>(`/orders?status=${status}`, []);
-    const allMockOrders = await requestWithFallback<Order[]>("/orders", []);
-    const clientSideFilteredData = allMockOrders.filter(
-      (order) => order.status === status
+  atomWithRefresh(async (get) => {
+    const userId = await getUserID({});
+    const orderState =
+      status === "pending"
+        ? "confirmed"
+        : status === "shipping"
+        ? "delivering"
+        : "completed";
+    const products = await get(productsState);
+    const data = await backendRequest<{
+      success: boolean;
+      orders: Array<Record<string, any>>;
+    }>(
+      `/get_orders_by_user_id?user_id=${encodeURIComponent(userId)}&order_state=${orderState}`
     );
-    return clientSideFilteredData;
+
+    return data.orders.map((order, index) => {
+      const details = order.order_details ?? {};
+      return {
+        id: order.order_code ?? index,
+        status,
+        paymentStatus: "success",
+        createdAt: new Date(order.created_at),
+        receivedAt: new Date(order.created_at),
+        items: Object.entries(details)
+          .map(([name, quantity]) => ({
+            product: products.find((product) => product.name === name),
+            quantity: Number(quantity),
+          }))
+          .filter((item) => item.product && item.quantity > 0),
+        delivery: {
+          type: "shipping",
+          detail: order.shipping_address ?? "",
+          name: order.receiver_name ?? "",
+          phone: order.phone_number ?? "",
+          provinceCode: "",
+          provinceName: "",
+          wardCode: "",
+          wardName: "",
+        },
+        total: Number(order.amount),
+        note: "",
+      };
+    });
   })
 );
 

@@ -292,11 +292,27 @@ function ShippingAddressPage() {
             defaultValue={address?.name}
           />
           <Input
-            name="phone"
-            label="Số điện thoại"
-            placeholder="0912345678"
-            defaultValue={address?.phone}
-          />
+          name="phone"
+          label="Số điện thoại"
+          placeholder="0912345678"
+          defaultValue={address?.phone}
+          // type="tel"
+          maxLength={10} // Enforces maximum length of 10
+          pattern="^0[0-9]{9}$" // HTML5 validation: must start with 0, followed by 9 digits
+          title="Số điện thoại phải bắt đầu bằng 0 và có đúng 10 chữ số"
+          onKeyPress={(e) => {
+            // Prevent typing any non-numeric characters
+            if (!/[0-9]/.test(e.key)) {
+              e.preventDefault();
+            }
+          }}
+          onChange={(e) => {
+            // If the user types a first character that is not '0', force it to '0'
+            if (e.target.value.length === 1 && e.target.value !== '0') {
+              e.target.value = ''; // Or you can set it to '0' depending on UX preference
+            }
+          }}
+        />
         </div>
         <Button
           fullWidth

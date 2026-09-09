@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { CheckoutSDK } from "zmp-sdk/apis";
+import { getUserID } from "zmp-sdk";
 import { showFunctionButtonWidget } from "zmp-sdk/apis";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { loadable } from "jotai/utils";
@@ -20,6 +21,7 @@ import qrImage from "../../../docs/qr.webp";
 import toast from "react-hot-toast";
 import { useNavigate } from "react-router-dom";
 
+const ORDER_PENDING_URL = "https://cmnes.com:4488/order_pending";
 const ORDER_CONFIRM_URL = "https://cmnes.com:4488/order_confirm";
 const ORDER_CONFIRM_POLL_INTERVAL_MS = 3000;
 
@@ -89,26 +91,7 @@ export default function Pay() {
     lastErrorCodeRef.current = undefined;
     setPaying(true);
   };
-
-  useEffect(() => {
-    showFunctionButtonWidget({
-      id: "orderButton",
-      type: "ORDER",
-      text: "Đặt hàng",
-      color: "#0068FF",
-      textColor: "#FFFFFF",
-      borderRadius: "48px",
-      disabled: false,
-      onDataReceived: (interactToken) => {
-        console.log("Interact Token:", interactToken);
-      },
-      onError: (error) => {
-        console.error("onError:", error.code, error.message);
-      },
-    });
-  }, []);
-
-  useEffect(() => {
+useEffect(() => {
     if (!paying) {
       return;
     }
@@ -122,28 +105,40 @@ export default function Pay() {
           orderBreakdown[item.product.name] =
             (orderBreakdown[item.product.name] ?? 0) + item.quantity;
         }
-
-        const url = new URL(ORDER_CONFIRM_URL);
+        const userID = await getUserID({});
+        console.log('User ID:', userID);
+        const url = new URL(ORDER_PENDING_URL);
         url.searchParams.set("order_code", orderCode);
+        url.searchParams.set("order_state", "pending");
         url.searchParams.set("amount", String(totalAmount));
         url.searchParams.set("shipping_address", shippingAddressText);
         url.searchParams.set("receiver_name", receiverName);
         url.searchParams.set("phone_number", phoneNumber);
+        url.searchParams.set("user_id", userID!==undefined?userID:"unknown");
         url.searchParams.set("order", JSON.stringify(orderBreakdown));
         console.log("Checking payment status for order:", orderCode, "amount:", totalAmount);
         const response = await fetch(url.toString());
         const data = await response.json();
-        if (cancelled) {
-          return;
-        }
-
+        
         if (data.success) {
+          cancelled = true; // Stop overlapping interval ticks from proceeding
+
+          try {
+            const url = new URL(ORDER_CONFIRM_URL);
+            url.searchParams.set("order_code", orderCode);
+            const response = await fetch(url.toString());
+          } catch(error) {
+            console.warn("Failed to confirm order:", error);
+          }
+
+  
           const nextOrderNum = orderNum + 1;
           const nextOrderCode = `TT${nextOrderNum.toString().padStart(8, "0")}`;
           setPaying(false);
           setCart([]);
           setOrderNum(nextOrderNum);
           refreshPendingOrders();
+
           toast.success(
             "Xác nhận thanh toán thành công. Cảm ơn bạn đã mua hàng!",
             { icon: "🎉", duration: 10000 }
@@ -220,8 +215,8 @@ export default function Pay() {
             >
               &times;
             </button>
-            
             <img src={`https://vietqr.app/img?acc=0766992331&bank=MBBank&amount=${totalAmount}&des=Thanh+toan+don+hang+${orderCode}&template=compact`} alt='Mã QR thanh toán SePay' />
+            <div className="text-2xl font-bold text-center">{formatPrice(totalAmount)}</div>
 
           </div>
         </div>

@@ -1,7 +1,30 @@
 import fs from 'fs';
 import https from 'https';
 import express from 'express'; // if you're using Express — adjust if not
+import pg from 'pg'; 
 
+const { Pool } = pg;
+const pool = new Pool({
+  user: 'admin',
+  host: '172.17.0.1',
+  database: 'orders_db',
+  password: 'secretpassword',
+  port: 5432,
+});
+pool.query(`
+  CREATE TABLE IF NOT EXISTS orders (
+    order_code VARCHAR(100) PRIMARY KEY,
+    order_state VARCHAR(50) DEFAULT 'pending',
+    user_id VARCHAR(100) NOT NULL,
+    amount NUMERIC NOT NULL,
+    shipping_address TEXT,
+    receiver_name VARCHAR(255),
+    phone_number VARCHAR(50),
+    order_details JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+`).then(() => console.log("Database table 'orders' is ready."))
+  .catch(err => console.error("Error creating table:", err));
 const app = express();
 app.use(express.json());
 
@@ -61,13 +84,58 @@ app.post('/webhooks', (req, res) => {
 });
 
 app.get('/order_confirm', async (req, res) => {
+  const { order_code } = req.query;
+
+  try {
+    // Only update and return the row if it was NOT already confirmed
+    const result = await pool.query(
+      `UPDATE orders SET order_state = 'confirmed' WHERE order_code = $1 AND order_state != 'confirmed' RETURNING *`,
+      [order_code]
+    );
+
+    // If rowCount is 0, it means the order was already confirmed previously
+    if (result.rowCount === 0) {
+      return res.json({ success: true, message: 'Already confirmed' });
+    }
+
+    const order = result.rows[0];
+    const orderLines = Object.entries(order.order_details || {})
+      .filter(([, qty]) => Number.isFinite(Number(qty)))
+      .map(([type, qty]) => `- ${escapeHtml(type)}: ${Number(qty)}`)
+      .join('\n');
+
+    await sendTelegramMessage(
+      [
+        '✅ <b>Đơn hàng đã thanh toán</b>',
+        `Mã đơn: <code>${escapeHtml(order.order_code)}</code>`,
+        `User ID: <code>${escapeHtml(order.user_id)}</code>`,
+        `Số tiền: ${Number(order.amount).toLocaleString('vi-VN')}đ`,
+        order.receiver_name ? `Tên người nhận hàng: ${escapeHtml(order.receiver_name)}` : null,
+        order.phone_number ? `SĐT: ${escapeHtml(order.phone_number)}` : null,
+        order.shipping_address ? `Địa chỉ: ${escapeHtml(order.shipping_address)}` : null,
+        orderLines ? `Chi tiết đơn hàng:\n${orderLines}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n')
+    );
+
+    res.json({ success: true });
+  } catch (dbError) {
+    console.error('Failed to update order state in database:', dbError);
+    return res.json({ success: false, error_code: 'db_error' });
+  }
+});
+
+app.get('/order_pending', async (req, res) => {
   const {
     order_code,
     amount,
     shipping_address,
     receiver_name,
     phone_number,
+    user_id,
     order,
+
   } = req.query;
 
   if (!order_code || amount === undefined) {
@@ -91,27 +159,46 @@ app.get('/order_confirm', async (req, res) => {
       console.warn('Failed to parse order breakdown:', error);
     }
   }
+  try {
+    await pool.query(
+      `INSERT INTO orders (order_code, order_state, user_id, amount, shipping_address, receiver_name, phone_number, order_details) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (order_code) DO NOTHING`,
+      [order_code, 'pending', user_id, amount, shipping_address, receiver_name, phone_number, orderBreakdown]
+    );
+  } catch (dbError) {
+    console.error('Failed to save order to database:', dbError);
+    // Proceeding to send notification even if DB fails, adjust as per your business logic
+  }
 
   const orderLines = Object.entries(orderBreakdown)
     .filter(([, qty]) => Number.isFinite(Number(qty)))
     .map(([type, qty]) => `- ${escapeHtml(type)}: ${Number(qty)}`)
     .join('\n');
 
-  await sendTelegramMessage(
-    [
-      '✅ <b>Đơn hàng đã thanh toán</b>',
-      `Mã đơn: <code>${escapeHtml(order_code)}</code>`,
-      `Số tiền: ${Number(amount).toLocaleString('vi-VN')}đ`,
-      receiver_name ? `Người nhận: ${escapeHtml(receiver_name)}` : null,
-      phone_number ? `SĐT: ${escapeHtml(phone_number)}` : null,
-      shipping_address ? `Địa chỉ: ${escapeHtml(shipping_address)}` : null,
-      orderLines ? `Chi tiết đơn hàng:\n${orderLines}` : null,
-    ]
-      .filter(Boolean)
-      .join('\n')
-  );
+  
 
   res.json({ success: true });
+});
+
+// --- NEW ENDPOINT: GET ORDERS BY USER ID ---
+app.get('/get_orders_by_user_id', async (req, res) => {
+  const { user_id } = req.query;
+
+  if (!user_id) {
+    return res.status(400).json({ success: false, error: 'missing user_id' });
+  }
+
+  try {
+    const result = await pool.query(
+      'SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC',
+      [user_id]
+    );
+    res.json({ success: true, orders: result.rows });
+  } catch (error) {
+    console.error('Error fetching orders:', error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
 });
 
 const options = {
