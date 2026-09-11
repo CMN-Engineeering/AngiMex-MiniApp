@@ -21,7 +21,7 @@ import qrImage from "../../../docs/qr.webp";
 import toast from "react-hot-toast";
 import { useNavigate } from "react-router-dom";
 
-const ORDER_PENDING_URL = "https://cmnes.com:4488/order_pending";
+const ORDER_WAIT_FOR_PAYING = "https://cmnes.com:4488/order_paying";
 const ORDER_CONFIRM_URL = "https://cmnes.com:4488/order_confirm";
 const ORDER_CONFIRM_POLL_INTERVAL_MS = 3000;
 
@@ -86,54 +86,67 @@ export default function Pay() {
       : userInfo.state === "hasData"
       ? userInfo.data?.phone ?? ""
       : "";
-
-  const showQR = () => {
-    lastErrorCodeRef.current = undefined;
-    setPaying(true);
-  };
-useEffect(() => {
-    if (!paying) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const checkPayment = async () => {
-      try {
+  const setOrdertoWaitforPaying = async () => {
+    // 1. Show QR and disable button immediately to prevent double clicks
+    showQR();
+    
+    try {
         const orderBreakdown: Record<string, number> = {};
         for (const item of cart) {
           orderBreakdown[item.product.name] =
             (orderBreakdown[item.product.name] ?? 0) + item.quantity;
         }
         const userID = await getUserID({});
+        
         console.log('User ID:', userID);
-        const url = new URL(ORDER_PENDING_URL);
+        const url = new URL(ORDER_WAIT_FOR_PAYING);
         url.searchParams.set("order_code", orderCode);
         url.searchParams.set("order_state", "pending");
         url.searchParams.set("amount", String(totalAmount));
         url.searchParams.set("shipping_address", shippingAddressText);
         url.searchParams.set("receiver_name", receiverName);
         url.searchParams.set("phone_number", phoneNumber);
-        url.searchParams.set("user_id", userID!==undefined?userID:"unknown");
+        url.searchParams.set("user_id", userID !== undefined ? userID : "unknown");
         url.searchParams.set("order", JSON.stringify(orderBreakdown));
-        console.log("Checking payment status for order:", orderCode, "amount:", totalAmount);
+        
+        console.log("Putting order into database:", orderCode);
         const response = await fetch(url.toString());
         const data = await response.json();
-        
+
         if (data.success) {
-          cancelled = true; // Stop overlapping interval ticks from proceeding
+          console.log(`Successfully put order ${orderCode} to wait for paying`);
+        }
+    } catch (error) {
+      console.warn("Failed to push order to pending:", error);
+    }
+  }
 
-          try {
-            const url = new URL(ORDER_CONFIRM_URL);
-            url.searchParams.set("order_code", orderCode);
-            const response = await fetch(url.toString());
-          } catch(error) {
-            console.warn("Failed to confirm order:", error);
-          }
+  const showQR = () => {
+    lastErrorCodeRef.current = undefined;
+    setPaying(true);
+  };
 
-  
+  useEffect(() => {
+    if (!paying) return;
+
+    let cancelled = false;
+
+    // 2. Check payment status continuously
+    const checkPayment = async () => {
+      if (cancelled) return;
+
+      try {
+        const url = new URL(ORDER_CONFIRM_URL);
+        url.searchParams.set("order_code", orderCode);
+        const response = await fetch(url.toString());
+        const data = await response.json();
+
+        if (cancelled) return;
+
+        if (data.success) {
+          cancelled = true; // Stop polling
+          
           const nextOrderNum = orderNum + 1;
-          const nextOrderCode = `TT${nextOrderNum.toString().padStart(8, "0")}`;
           setPaying(false);
           setCart([]);
           setOrderNum(nextOrderNum);
@@ -145,19 +158,21 @@ useEffect(() => {
           );
           navigate("/orders", { viewTransition: true });
         } else {
+          // Handle silent errors vs real errors
           const errorCode: string | undefined = data.error_code ?? data.error;
           if (errorCode !== lastErrorCodeRef.current) {
             lastErrorCodeRef.current = errorCode;
-            if (!SILENT_PAYMENT_ERROR_CODES.has(normalizeErrorCode(errorCode))) {
+            if (errorCode && !SILENT_PAYMENT_ERROR_CODES.has(normalizeErrorCode(errorCode))) {
               toast.error(getPaymentErrorMessage(errorCode));
             }
           }
         }
       } catch (error) {
-        console.warn("Failed to confirm payment:", error);
+        console.warn("Failed to confirm order:", error);
       }
     };
 
+    // Run immediately, then poll
     checkPayment();
     const intervalId = setInterval(checkPayment, ORDER_CONFIRM_POLL_INTERVAL_MS);
 
@@ -169,11 +184,6 @@ useEffect(() => {
     paying,
     orderCode,
     orderNum,
-    totalAmount,
-    shippingAddressText,
-    receiverName,
-    phoneNumber,
-    cart,
     setCart,
     setOrderNum,
     refreshPendingOrders,
@@ -190,7 +200,7 @@ useEffect(() => {
           </div>
         </div>
         {/* <div id="orderButton" className="flex-none">Hehe</div> */}
-        <Button onClick={showQR} disabled={paying}>
+        <Button onClick={setOrdertoWaitforPaying} disabled={paying}>
           Thanh toán
         </Button>
       </div>

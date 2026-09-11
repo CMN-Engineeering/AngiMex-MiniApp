@@ -6,6 +6,8 @@ import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
 import { useNavigate } from "react-router-dom";
 import { Button, Icon, Input } from "zmp-ui";
+import province_data from "./data/province_data.json"
+import commune_data from "./data/commune_data.json"
 
 // Cas AddressKit - danh mục hành chính Việt Nam
 // https://cas.so/address-kit
@@ -179,11 +181,8 @@ function ShippingAddressPage() {
     (async () => {
       setLoadingProvinces(true);
       try {
-        const res = await fetch(
-          `${ADDRESS_API_ENDPOINT}/${ADDRESS_EFFECTIVE_DATE}/provinces`
-        );
-        const data = await res.json();
-        if (!ignore) setProvinces(data.provinces ?? []);
+ 
+        if (!ignore) setProvinces(province_data.provinces ?? []);
       } catch (err) {
         if (!ignore) toast.error("Không tải được danh sách tỉnh/thành");
       } finally {
@@ -201,21 +200,28 @@ function ShippingAddressPage() {
       setWards([]);
       return;
     }
+    
     let ignore = false;
-    (async () => {
-      setLoadingWards(true);
-      try {
-        const res = await fetch(
-          `${ADDRESS_API_ENDPOINT}/${ADDRESS_EFFECTIVE_DATE}/provinces/${provinceCode}/communes`
-        );
-        const data = await res.json();
-        if (!ignore) setWards(data.communes ?? []);
-      } catch (err) {
-        if (!ignore) toast.error("Không tải được danh sách xã/phường");
-      } finally {
-        if (!ignore) setLoadingWards(false);
-      }
-    })();
+    
+    setLoadingWards(true);
+    try {
+      // Lọc danh sách xã/phường theo mã tỉnh/thành
+      const filteredCommunes = commune_data.communes.filter(
+        (commune) => commune.provinceCode === provinceCode
+      );
+
+      // Sắp xếp theo tên để hiển thị đẹp hơn trên UI
+      const sortedCommunes = filteredCommunes.sort((a, b) => 
+        a.name.localeCompare(b.name)
+      );
+
+      if (!ignore) setWards(sortedCommunes);
+    } catch (err) {
+      if (!ignore) toast.error("Không tải được danh sách xã/phường");
+    } finally {
+      if (!ignore) setLoadingWards(false);
+    }
+    
     return () => {
       ignore = true;
     };

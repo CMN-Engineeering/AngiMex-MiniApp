@@ -1,7 +1,7 @@
 [
   {
     "id": 1,
-    "name": "Tiệm Tí Hon - Chi nhánh 1",
+    "name": "Chi nhánh 1",
     "image": "https://zalo-miniapp.github.io/zaui-market/dummy/product/apples.png",
     "address": "Z06, Số 13, Tân Thuận Đông, Quận 7, Thành phố Hồ Chí Minh, Việt Nam",
     "location": {
@@ -11,12 +11,12 @@
   },
   {
     "id": 2,
-    "name": "Tiệm Tí Hon - Chi nhánh 2",
+    "name": "Văn phòng",
     "image": "https://zalo-miniapp.github.io/zaui-market/dummy/product/apples.png",
-    "address": "Z06, Số 13, Tân Thuận Đông, Quận 7, Thành phố Hồ Chí Minh, Việt Nam",
+    "address": "373 Nguyễn Công Trứ, Phường Bến Thành, Thành phố Hồ Chí Minh, Việt Nam",
     "location": {
-      "lat": 10.768746,
-      "lng": 106.728228
+      "lat": 10.765511033188634,
+      "lng": 106.69793612194364
     }
   }
 ]

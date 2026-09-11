@@ -14,7 +14,7 @@ const pool = new Pool({
 pool.query(`
   CREATE TABLE IF NOT EXISTS orders (
     order_code VARCHAR(100) PRIMARY KEY,
-    order_state VARCHAR(50) DEFAULT 'pending',
+    order_state VARCHAR(50) DEFAULT 'none',
     user_id VARCHAR(100) NOT NULL,
     amount NUMERIC NOT NULL,
     shipping_address TEXT,
@@ -86,14 +86,40 @@ app.post('/webhooks', (req, res) => {
 app.get('/order_confirm', async (req, res) => {
   const { order_code } = req.query;
 
+  if (!order_code) {
+    return res.json({ success: false, error_code: 'invalid_request' });
+  }
+
+  // 1. Check if payment has been received via webhooks
+  if (!paymentsByCode.has(order_code)) {
+    return res.json({ success: false, error_code: 'order_not_found' });
+  }
+
   try {
-    // Only update and return the row if it was NOT already confirmed
+    // 2. Get order details to verify amount
+    const orderRes = await pool.query(
+      `SELECT * FROM orders WHERE order_code = $1`,
+      [order_code]
+    );
+
+    if (orderRes.rowCount === 0) {
+      return res.json({ success: false, error_code: 'order_not_found' });
+    }
+
+    const orderInfo = orderRes.rows[0];
+    const transferAmount = paymentsByCode.get(order_code);
+
+    // 3. Verify payment amount
+    if (Number(orderInfo.amount) !== Number(transferAmount)) {
+      return res.json({ success: false, error_code: 'wrong_payment_amount' });
+    }
+
+    // 4. Update the row only if it was NOT already confirmed
     const result = await pool.query(
       `UPDATE orders SET order_state = 'confirmed' WHERE order_code = $1 AND order_state != 'confirmed' RETURNING *`,
       [order_code]
     );
 
-    // If rowCount is 0, it means the order was already confirmed previously
     if (result.rowCount === 0) {
       return res.json({ success: true, message: 'Already confirmed' });
     }
@@ -126,7 +152,7 @@ app.get('/order_confirm', async (req, res) => {
   }
 });
 
-app.get('/order_pending', async (req, res) => {
+app.get('/order_paying', async (req, res) => {
   const {
     order_code,
     amount,
@@ -135,20 +161,11 @@ app.get('/order_pending', async (req, res) => {
     phone_number,
     user_id,
     order,
-
   } = req.query;
-
+  console.log(`Order ${order_code} setting to Wait for Paying`)
+  
   if (!order_code || amount === undefined) {
     return res.json({ success: false, error_code: 'invalid_request' });
-  }
-
-  if (!paymentsByCode.has(order_code)) {
-    return res.json({ success: false, error_code: 'order_not_found' });
-  }
-
-  const transferAmount = paymentsByCode.get(order_code);
-  if (Number(amount) !== Number(transferAmount)) {
-    return res.json({ success: false, error_code: 'wrong_payment_amount' });
   }
 
   let orderBreakdown = {};
@@ -159,24 +176,18 @@ app.get('/order_pending', async (req, res) => {
       console.warn('Failed to parse order breakdown:', error);
     }
   }
+
   try {
+    // Only insert into DB. Duplicate clicks are ignored due to ON CONFLICT
     await pool.query(
       `INSERT INTO orders (order_code, order_state, user_id, amount, shipping_address, receiver_name, phone_number, order_details) 
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (order_code) DO NOTHING`,
-      [order_code, 'pending', user_id, amount, shipping_address, receiver_name, phone_number, orderBreakdown]
+      [order_code, 'waiting for payment', user_id, amount, shipping_address, receiver_name, phone_number, orderBreakdown]
     );
   } catch (dbError) {
     console.error('Failed to save order to database:', dbError);
-    // Proceeding to send notification even if DB fails, adjust as per your business logic
   }
-
-  const orderLines = Object.entries(orderBreakdown)
-    .filter(([, qty]) => Number.isFinite(Number(qty)))
-    .map(([type, qty]) => `- ${escapeHtml(type)}: ${Number(qty)}`)
-    .join('\n');
-
-  
 
   res.json({ success: true });
 });
@@ -191,7 +202,7 @@ app.get('/get_orders_by_user_id', async (req, res) => {
 
   try {
     const result = await pool.query(
-      'SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC',
+      'SELECT * FROM orders WHERE user_id = $1',
       [user_id]
     );
     res.json({ success: true, orders: result.rows });
