@@ -13,6 +13,7 @@ import {
   Location,
   Order,
   OrderStatus,
+  PaymentStatus,
   Product,
   ShippingAddress,
   Station,
@@ -29,8 +30,7 @@ import toast from "react-hot-toast";
 import { calculateDistance } from "./utils/location";
 import { formatDistant } from "./utils/format";
 import CONFIG from "./config";
-import { backendRequest } from "@/utils/backend";
-import { getUserID } from "zmp-sdk";
+import { backendRequest, getCurrentUserId } from "@/utils/backend";
 
 export const userInfoKeyState = atom(0);
 
@@ -226,29 +226,28 @@ export const shippingAddressState = atomWithStorage<
   ShippingAddress | undefined
 >(CONFIG.STORAGE_KEYS.SHIPPING_ADDRESS, undefined);
 
-export const ordersState = atomFamily((status: OrderStatus) =>
-  atomWithRefresh(async (get) => {
-    const userId = await getUserID({});
-    const orderState =
-      status === "pending"
-        ? "confirmed"
-        : status === "shipping"
-        ? "delivering"
-        : "completed";
+const allOrdersState = atomWithRefresh(async (get) => {
+  const userId = await getCurrentUserId();
     const products = await get(productsState);
     const data = await backendRequest<{
       success: boolean;
       orders: Array<Record<string, any>>;
-    }>(
-      `/get_orders_by_user_id?user_id=${encodeURIComponent(userId)}&order_state=${orderState}`
-    );
+    }>(`/get_orders_by_user_id?user_id=${encodeURIComponent(userId)}`);
 
     return data.orders.map((order, index) => {
       const details = order.order_details ?? {};
+      const status: OrderStatus =
+        order.order_state === "waiting for payment"
+          ? "waiting for payment"
+          : order.order_state === "confirmed"
+          ? "confirmed"
+          : "completed";
+      const paymentStatus: PaymentStatus =
+        status === "waiting for payment" ? "pending" : "success";
       return {
         id: order.order_code ?? index,
         status,
-        paymentStatus: "success",
+        paymentStatus,
         createdAt: new Date(order.created_at),
         receivedAt: new Date(order.created_at),
         items: Object.entries(details)
@@ -271,8 +270,16 @@ export const ordersState = atomFamily((status: OrderStatus) =>
         note: "",
       };
     });
+  });
+
+export const ordersState = atomFamily((status: OrderStatus) =>
+  atom(async (get) => {
+    const orders = await get(allOrdersState);
+    return orders.filter((order) => order.status === status);
   })
 );
+
+export const refreshOrdersState = allOrdersState;
 
 export const deliveryModeState = atomWithStorage<Delivery["type"]>(
   CONFIG.STORAGE_KEYS.DELIVERY,

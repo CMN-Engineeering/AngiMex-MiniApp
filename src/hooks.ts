@@ -5,7 +5,7 @@ import { UIMatch, useMatches, useNavigate } from "react-router-dom";
 import {
   cartState,
   cartTotalState,
-  ordersState,
+  refreshOrdersState,
   userInfoKeyState,
   userInfoState,
 } from "@/state";
@@ -116,7 +116,7 @@ export function useCheckout() {
   const [cart, setCart] = useAtom(cartState);
   const requestInfo = useRequestInformation();
   const navigate = useNavigate();
-  const refreshNewOrders = useSetAtom(ordersState("pending"));
+  const refreshOrders = useSetAtom(refreshOrdersState);
 
   return async () => {
     try {
@@ -133,7 +133,7 @@ export function useCheckout() {
         })),
       });
       setCart([]);
-      refreshNewOrders();
+      refreshOrders();
       navigate("/orders", {
         viewTransition: true,
       });

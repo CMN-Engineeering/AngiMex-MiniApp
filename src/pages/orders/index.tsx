@@ -13,11 +13,11 @@ function OrdersPage() {
       activeKey={status}
       onChange={(status) => navigate(`/orders/${status}`)}
     >
-      <Tabs.Tab key="pending" label="Đang xử lý">
-        <OrderList ordersState={ordersState("pending")} />
+      <Tabs.Tab key="waiting for payment" label="Đang chờ thanh toán">
+        <OrderList ordersState={ordersState("waiting for payment")} />
       </Tabs.Tab>
-      <Tabs.Tab key="shipping" label="Đang giao">
-        <OrderList ordersState={ordersState("shipping")} />
+      <Tabs.Tab key="confirmed" label="Thanh toán thành công">
+        <OrderList ordersState={ordersState("confirmed")} />
       </Tabs.Tab>
       <Tabs.Tab key="completed" label="Lịch sử">
         <OrderList ordersState={ordersState("completed")} />

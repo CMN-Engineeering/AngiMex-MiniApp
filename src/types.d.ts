@@ -64,7 +64,7 @@ export type Delivery =
       stationId: number;
     };
 
-export type OrderStatus = "pending" | "shipping" | "completed";
+export type OrderStatus = "waiting for payment" | "confirmed" | "completed";
 export type PaymentStatus = "pending" | "success" | "failed";
 
 export interface Order {

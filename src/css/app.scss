@@ -39,9 +39,13 @@
 }
 
 .zaui-tabs-tabbar {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  display: flex;
+  overflow-x: auto;
+  white-space: nowrap;
   text-align: center;
+}
+.zaui-tabs-tabbar > * {
+  flex: 0 0 auto;
 }
 .zaui-tab-content {
   flex: 1;
