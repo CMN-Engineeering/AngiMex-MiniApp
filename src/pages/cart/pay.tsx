@@ -2,9 +2,11 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { CheckoutSDK } from "zmp-sdk/apis";
 import { showFunctionButtonWidget } from "zmp-sdk/apis";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
+
 import { loadable } from "jotai/utils";
 import {
   cartState,
+  cartNoteState,
   cartTotalState,
   deliveryModeState,
   orderNumState,
@@ -14,7 +16,7 @@ import {
   userInfoState,
 } from "@/state";
 import { formatPrice, formatShippingAddress } from "@/utils/format";
-import { Button } from "zmp-ui";
+import { Button, Modal, Select } from "zmp-ui";
 import { getAccessToken } from "zmp-sdk";
 import qrImage from "../../../docs/qr.webp";
 import toast from "react-hot-toast";
@@ -23,6 +25,7 @@ import { createQrUrl, downloadQr, getCurrentUserId } from "@/utils/backend";
 
 const NEW_ORDER_CODE_URL = "https://cmnes.com:4488/new_order_code";
 const ORDER_WAIT_FOR_PAYING = "https://cmnes.com:4488/order_paying";
+const ORDER_COD = "https://cmnes.com:4488/order_cod";
 const ORDER_CONFIRM_URL = "https://cmnes.com:4488/order_confirm";
 const ORDER_CONFIRM_POLL_INTERVAL_MS = 3000;
 
@@ -89,12 +92,17 @@ function reserveOrderCode(userID: string) {
 export default function Pay() {
   const { totalAmount } = useAtomValue(cartTotalState);
   const [cart, setCart] = useAtom(cartState);
+  const [, setNote] = useAtom(cartNoteState);
+  const note = useAtomValue(cartNoteState);
   const [orderNum, setOrderNum] = useAtom(orderNumState);
   const [orderCode, setOrderCode] = useState<string | null>(activeOrderCode);
   const refreshOrders = useSetAtom(refreshOrdersState);
   const navigate = useNavigate();
   const [paying, setPaying] = useState(false);
   const [reserving, setReserving] = useState(false);
+  const [confirmingClose, setConfirmingClose] = useState(false);
+  const [confirmingOrder, setConfirmingOrder] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<"qr" | "cod">("qr");
   const lastErrorCodeRef = useRef<string | undefined>(undefined);
 
   const deliveryMode = useAtomValue(deliveryModeState);
@@ -129,6 +137,18 @@ export default function Pay() {
   const setOrdertoWaitforPaying = async () => {
     if (reserving || paying) return;
 
+    if (
+      !receiverName.trim() ||
+      !/^0\d{9}$/.test(phoneNumber.trim()) ||
+      !shippingAddressText.trim()
+    ) {
+      toast.error(
+        "Vui lòng kiểm tra tên, số điện thoại và địa chỉ giao hàng trước khi gửi.",
+        {duration: 5000 }
+      );
+      return;
+    }
+
     setReserving(true);
     try {
         const orderBreakdown: Record<string, number> = {};
@@ -140,7 +160,6 @@ export default function Pay() {
 
         const newOrderCode = await reserveOrderCode(userID);
         setOrderCode(newOrderCode);
-        showQR();
 
         const url = new URL(ORDER_WAIT_FOR_PAYING);
         url.searchParams.set("order_code", newOrderCode);
@@ -149,6 +168,7 @@ export default function Pay() {
         url.searchParams.set("shipping_address", shippingAddressText);
         url.searchParams.set("receiver_name", receiverName);
         url.searchParams.set("phone_number", phoneNumber);
+        url.searchParams.set("note", note.slice(0, 100));
         url.searchParams.set("user_id", userID);
         url.searchParams.set("order", JSON.stringify(orderBreakdown));
         
@@ -158,6 +178,7 @@ export default function Pay() {
 
         if (data.success) {
           console.log(`Successfully put order ${newOrderCode} to wait for paying`);
+          showQR();
         }
     } catch (error) {
       console.warn("Failed to push order to pending:", error);
@@ -167,9 +188,108 @@ export default function Pay() {
     }
   }
 
+  const setOrdertoCOD = async () => {
+    if (reserving || paying) return;
+
+    if (
+      !receiverName.trim() ||
+      !/^0\d{9}$/.test(phoneNumber.trim()) ||
+      !shippingAddressText.trim()
+    ) {
+      toast.error(
+        "Vui lòng kiểm tra tên, số điện thoại và địa chỉ giao hàng trước khi gửi.",
+        {duration: 5000 }
+      );
+      return;
+    }
+
+    setReserving(true);
+    try {
+        const orderBreakdown: Record<string, number> = {};
+        for (const item of cart) {
+          orderBreakdown[item.product.name] =
+            (orderBreakdown[item.product.name] ?? 0) + item.quantity;
+        }
+        const userID = await getCurrentUserId();
+
+        const url = new URL(ORDER_COD);
+        url.searchParams.set("order_state", "cod");
+        url.searchParams.set("amount", String(totalAmount));
+        url.searchParams.set("shipping_address", shippingAddressText);
+        url.searchParams.set("receiver_name", receiverName);
+        url.searchParams.set("phone_number", phoneNumber);
+        url.searchParams.set("note", note.slice(0, 100));
+        url.searchParams.set("user_id", userID);
+        url.searchParams.set("order", JSON.stringify(orderBreakdown));
+        
+        console.log("Putting COD order into database");
+        const response = await fetch(url.toString());
+        
+        // Tránh lỗi parse JSON nếu server trả về trang lỗi HTML (404, 500...)
+        if (!response.ok) {
+          throw new Error(`Server trả về lỗi: ${response.status}`);
+        }
+        
+        const data = await response.json();
+
+        if (data.success) {
+          const savedOrderCode = String(data.order_code ?? "");
+          setOrderCode(savedOrderCode || null);
+          console.log(`Successfully put order ${savedOrderCode} to COD`);
+          
+          // Hoàn tất đơn, xoá giỏ hàng và chuyển hướng
+          activeOrderCode = null;
+          setCart([]);
+          setNote("");
+          setOrderNum(orderNum + 1);
+          refreshOrders();
+
+          toast.success(
+            "Đặt hàng thành công. Cảm ơn bạn đã mua hàng!",
+            { icon: "🎉", duration: 3000 }
+          );
+          // Điều hướng về trang danh sách đơn hàng (tuỳ chỉnh đường dẫn nếu cần)
+          navigate("/orders/cod", { viewTransition: true });
+        } else {
+          toast.error("Không thể tạo đơn hàng. Vui lòng thử lại.");
+        }
+    } catch (error) {
+      console.warn("Failed to push order to pending:", error);
+      toast.error("Không thể tạo mã đơn hàng. Vui lòng thử lại.");
+    } finally {
+      setReserving(false);
+    }
+  }
+
+  const requestOrderConfirmation = () => {
+    if (paying || reserving) return;
+    setConfirmingOrder(true);
+  };
+
+  const confirmOrder = () => {
+    setConfirmingOrder(false);
+    if (paymentMethod === "qr") {
+      void setOrdertoWaitforPaying();
+      return;
+    }
+    void setOrdertoCOD();
+  };
+
   const showQR = () => {
     lastErrorCodeRef.current = undefined;
     setPaying(true);
+  };
+  const requestCloseQR = () => {
+    setConfirmingClose(true);
+  };
+  const closeQR = () => {
+    setConfirmingClose(false);
+    setPaying(false);
+    setCart([]);
+    setNote("");
+    activeOrderCode = null;
+    refreshOrders();
+    navigate("/orders/waiting for payment", { viewTransition: true });
   };
   const downloadQR = async () => {
     if (!orderCode) return;
@@ -206,6 +326,7 @@ export default function Pay() {
           activeOrderCode = null;
           setPaying(false);
           setCart([]);
+          setNote("");
           setOrderNum(nextOrderNum);
           refreshOrders();
 
@@ -213,7 +334,7 @@ export default function Pay() {
             "Xác nhận thanh toán thành công. Cảm ơn bạn đã mua hàng!",
             { icon: "🎉", duration: 10000 }
           );
-          navigate("/orders", { viewTransition: true });
+          navigate("/orders/confirmed", { viewTransition: true });
         } else {
           // Handle silent errors vs real errors
           const errorCode: string | undefined = data.error_code ?? data.error;
@@ -242,30 +363,63 @@ export default function Pay() {
     orderCode,
     orderNum,
     setCart,
+    setNote,
     setOrderNum,
     refreshOrders,
     navigate,
   ]);
-
   return (
-    <>
-      <div className="flex-none flex items-center py-3 px-4 space-x-2 bg-section">
-        <div className="space-y-1 flex-1">
-          <div className="text-xs text-subtitle">Tổng thanh toán</div>
-          <div className="text-sm font-medium text-primary">
-            {formatPrice(totalAmount)}
-          </div>
-        </div>
-        {/* <div id="orderButton" className="flex-none">Hehe</div> */}
-        <Button onClick={setOrdertoWaitforPaying} disabled={paying || reserving}>
-          Thanh toán
+    <> 
+      <div style={{
+            display: 'flex',
+            fontSize:'20px',
+            padding:'10px'
+          }}>
+          <span>Tổng thanh toán</span>
+          <span style={{
+            marginLeft:'auto',
+            fontWeight:'650',
+            color:'green'
+            }}
+            >{formatPrice(totalAmount)}
+          </span>
+      </div>
+      <div className="px-4 py-3" style={{}}>
+        <span>
+          Hình thức thanh toán</span>
+        <Select
+          name="payment-method"
+          value={paymentMethod}
+          onChange={(value) => {
+            if (value === "qr" || value === "cod") {
+              setPaymentMethod(value);
+            }
+          }}
+          placeholder="Chọn hình thức thanh toán"
+          closeOnSelect
+        >
+          <Select.Option value="qr" title="Thanh toán bằng QR">
+            Thanh toán bằng QR
+          </Select.Option>
+          <Select.Option value="cod" title="Thanh toán khi nhận hàng">
+            Thanh toán khi nhận hàng
+          </Select.Option>
+        </Select>
+      </div>
+      <div className="px-4 py-3">
+        <Button
+          className="w-full"
+          onClick={requestOrderConfirmation}
+          disabled={paying || reserving}
+        >
+          Xác nhận đặt hàng
         </Button>
       </div>
       {paying && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
           role="presentation"
-          onClick={() => setPaying(false)}
+          onClick={requestCloseQR}
         >
           <div
             className="relative w-full max-w-sm rounded-lg bg-section p-4"
@@ -278,7 +432,7 @@ export default function Pay() {
               type="button"
               className="absolute right-3 top-2 text-2xl leading-none text-subtitle"
               aria-label="Đóng mã QR"
-              onClick={() => setPaying(false)}
+              onClick={requestCloseQR}
             >
               &times;
             </button>
@@ -290,6 +444,43 @@ export default function Pay() {
           </div>
         </div>
       )}
+      <Modal
+        visible={confirmingOrder}
+        title="Xác nhận đặt hàng"
+        description={`Bạn có chắc muốn đặt hàng với hình thức ${paymentMethod === "qr" ? "thanh toán bằng QR" : "thanh toán khi nhận hàng"}?`}
+        maskClosable={!reserving}
+        onClose={() => setConfirmingOrder(false)}
+        actions={[
+          {
+            text: "Hủy",
+            close: true,
+            onClick: () => setConfirmingOrder(false),
+          },
+          {
+            text: "Xác nhận",
+            disabled: reserving,
+            onClick: confirmOrder,
+          },
+        ]}
+      />
+      <Modal
+        visible={confirmingClose}
+        title="Đóng mã QR"
+        description="Đơn hàng chưa thanh toán sẽ tự động xóa sau 24h. Tiếp tục đóng mã và lưu đơn hàng?"
+        onClose={() => setConfirmingClose(false)}
+        actions={[
+          {
+            text: "Hủy",
+            close: true,
+            onClick: () => setConfirmingClose(false),
+          },
+          {
+            text: "Đóng mã QR",
+            danger: true,
+            onClick: closeQR,
+          },
+        ]}
+      />
     </>
   );
 }

@@ -59,6 +59,7 @@ export function useRequestInformation() {
 
 export function useAddToCart(product: Product) {
   const [cart, setCart] = useAtom(cartState);
+  const stock = Math.max(0, Number(product.stock) || 0);
 
   const currentCartItem = useMemo(
     () => cart.find((item) => item.product.id === product.id),
@@ -74,26 +75,31 @@ export function useAddToCart(product: Product) {
         typeof quantity === "function"
           ? quantity(currentCartItem?.quantity ?? 0)
           : quantity;
-      if (newQuantity <= 0) {
-        cart.splice(cart.indexOf(currentCartItem!), 1);
+      const limitedQuantity = Math.min(Math.max(0, newQuantity), stock);
+      if (limitedQuantity === 0) {
+        if (currentCartItem) {
+          cart.splice(cart.indexOf(currentCartItem), 1);
+        }
       } else {
         if (currentCartItem) {
-          currentCartItem.quantity = newQuantity;
+          currentCartItem.quantity = limitedQuantity;
         } else {
           cart.push({
             product,
-            quantity: newQuantity,
+            quantity: limitedQuantity,
           });
         }
       }
       return [...cart];
     });
     if (options?.toast) {
-      toast.success("Đã thêm vào giỏ hàng");
+      stock === 0
+        ? toast.error("Sản phẩm đã hết hàng")
+        : toast.success("Đã thêm vào giỏ hàng");
     }
   };
 
-  return { addToCart, cartQuantity: currentCartItem?.quantity ?? 0 };
+  return { addToCart, cartQuantity: currentCartItem?.quantity ?? 0, stock };
 }
 
 export function useCustomerSupport() {

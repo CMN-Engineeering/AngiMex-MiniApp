@@ -17,12 +17,17 @@ export interface ProductItemProps {
 
 export default function ProductItem(props: ProductItemProps) {
   const [selected, setSelected] = useState(false);
-  const { addToCart, cartQuantity } = useAddToCart(props.product);
+  const { addToCart, cartQuantity, stock } = useAddToCart(props.product);
 
   return (
     <div
       className="flex flex-col cursor-pointer group bg-section rounded-xl shadow-[0_10px_24px_#0D0D0D17]"
       onClick={() => setSelected(true)}
+    style={{
+      display:'flex',
+      flexDirection:'column',
+      justifyContent:'space-between'
+    }}
     >
       <TransitionLink
         to={`/product/${props.product.id}`}
@@ -44,15 +49,38 @@ export default function ProductItem(props: ProductItemProps) {
             />
             <div className="pt-2 pb-1.5">
               <div className="pt-1 pb-0.5">
-                <div className="text-xs h-9 line-clamp-2">
+                <div 
+                style={{
+                  fontSize:'17px',
+                  fontWeight:'bold',
+                  marginBottom:'10px'
+                }}
+                >
                   {props.product.name}
                 </div>
               </div>
-              <div className="mt-0.5 text-sm font-bold text-primary truncate">
+              {/* <div 
+              style={{
+                  fontSize:'15px',
+                  marginBottom:'10px'
+                }}
+              >
+                Còn lại: {stock}
+              </div> */}
+              <div
+              style={{
+                color:"#059747e1",
+                fontSize : "18px",
+                fontWeight:"700"
+              }}>
                 {formatPrice(props.product.price)}
               </div>
               {props.product.originalPrice && (
-                <div className="text-3xs space-x-0.5 truncate">
+                <div
+                style={{
+                  fontSize : "15px",
+                  fontWeight:"500"
+                }}>
                   <span className="text-subtitle line-through">
                     {formatPrice(props.product.originalPrice)}
                   </span>
@@ -71,12 +99,17 @@ export default function ProductItem(props: ProductItemProps) {
           </>
         )}
       </TransitionLink>
-      <div className="p-2">
+      {/* <div className="p-2"
+      >
         {cartQuantity === 0 ? (
           <Button
             variant="secondary"
             size="small"
             fullWidth
+            style={{
+              marginTop:''
+            }}
+            disabled={stock === 0}
             onClick={(e) => {
               e.stopPropagation();
               addToCart(1, {
@@ -84,12 +117,16 @@ export default function ProductItem(props: ProductItemProps) {
               });
             }}
           >
-            Thêm vào giỏ
+            Thêm vào giỏ main
           </Button>
         ) : (
-          <QuantityInput value={cartQuantity} onChange={addToCart} />
+          <QuantityInput
+            value={cartQuantity}
+            maxValue={stock}
+            onChange={addToCart}
+          />
         )}
-      </div>
+      </div> */}
     </div>
   );
 }

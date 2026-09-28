@@ -5,12 +5,14 @@ import { HTMLAttributes } from "react";
 export interface ProductGridProps extends HTMLAttributes<HTMLDivElement> {
   products: Product[];
   replace?: boolean;
+  showAddToCart?: boolean;
 }
 
 export default function ProductGrid({
   products,
   className,
   replace,
+  showAddToCart,
   ...props
 }: ProductGridProps) {
   return (
@@ -21,7 +23,12 @@ export default function ProductGrid({
       {...props}
     >
       {products.map((product) => (
-        <ProductItem key={product.id} product={product} replace={replace} />
+        <ProductItem
+          key={product.id}
+          product={product}
+          replace={replace}
+          showAddToCart={showAddToCart}
+        />
       ))}
     </div>
   );

@@ -1,4 +1,5 @@
 import { getUserID } from "zmp-sdk";
+import { downloadFile } from "zmp-sdk/apis";
 
 const BACKEND_URL = "https://cmnes.com:4488";
 
@@ -52,17 +53,5 @@ export async function downloadQr(amount: number, orderCode: number | string) {
   const url = new URL(`${BACKEND_URL}/download_qr`);
   url.searchParams.set("amount", String(amount));
   url.searchParams.set("order_code", String(orderCode));
-  const response = await fetch(url.toString());
-  if (!response.ok) {
-    throw new Error(`QR download failed: ${response.status}`);
-  }
-
-  const blobUrl = URL.createObjectURL(await response.blob());
-  const link = document.createElement("a");
-  link.href = blobUrl;
-  link.download = `ma-qr-${orderCode}.png`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(blobUrl);
+  await downloadFile({ url: url.toString() });
 }

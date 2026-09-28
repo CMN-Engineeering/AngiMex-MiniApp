@@ -8,7 +8,8 @@ export default function FlashSales() {
 
   return (
     <Section title="Giá tốt hôm nay">
-      <ProductGrid products={products} />
+      <ProductGrid products={products} showAddToCart={false} />
     </Section>
+    
   );
 }

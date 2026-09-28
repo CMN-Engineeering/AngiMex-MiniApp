@@ -45,7 +45,8 @@ export default function Header() {
           <>
             <img
               src={getConfig((c) => c.template.logoUrl)}
-              className="flex-none w-8 h-8 rounded-full"
+              // className="flex-none w-8 h-8 rounded-full"
+              style={{width : "50px"}}
             />
             <TransitionLink to="/stations" className="flex-1 overflow-hidden">
               <div className="flex items-center space-x-1">

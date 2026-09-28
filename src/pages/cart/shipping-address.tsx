@@ -1,11 +1,20 @@
-import { shippingAddressState } from "@/state";
-import { useAtom } from "jotai";
+import {
+  getUserContactInfo,
+  refreshOrdersState,
+  shippingAddressState,
+  userInfoState,
+} from "@/state";
+import { Order } from "@/types";
+import { backendPost, getCurrentUserId } from "@/utils/backend";
+import { formatShippingAddress } from "@/utils/format";
+import { useAtom, useAtomValue } from "jotai";
 import { useResetAtom } from "jotai/utils";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Button, Icon, Input } from "zmp-ui";
+import { useSetAtom } from "jotai";
 import province_data from "./data/province_data.json"
 import commune_data from "./data/commune_data.json"
 
@@ -160,8 +169,12 @@ function SearchableSelect({
 }
 
 function ShippingAddressPage() {
+  const { state } = useLocation();
+  const editingOrder = (state as { order?: Order } | null)?.order;
   const [address, setAddress] = useAtom(shippingAddressState);
+  const userInfo = useAtomValue(userInfoState);
   const resetAddress = useResetAtom(shippingAddressState);
+  const refreshOrders = useSetAtom(refreshOrdersState);
   const navigate = useNavigate();
 
   const [provinces, setProvinces] = useState<AddressOption[]>([]);
@@ -169,11 +182,39 @@ function ShippingAddressPage() {
   const [loadingProvinces, setLoadingProvinces] = useState(false);
   const [loadingWards, setLoadingWards] = useState(false);
 
+  const initialAddress = editingOrder?.delivery.type === "shipping"
+    ? editingOrder.delivery
+    : address;
   const [provinceCode, setProvinceCode] = useState(
-    (address as any)?.provinceCode ?? ""
+    (initialAddress as any)?.provinceCode ?? ""
   );
-  const [wardCode, setWardCode] = useState((address as any)?.wardCode ?? "");
-  const [detail, setDetail] = useState((address as any)?.detail ?? "");
+  const [wardCode, setWardCode] = useState((initialAddress as any)?.wardCode ?? "");
+  const [detail, setDetail] = useState((initialAddress as any)?.detail ?? "");
+  const [recipientName, setRecipientName] = useState(
+    initialAddress?.name || userInfo?.name || ""
+  );
+  const [recipientPhone, setRecipientPhone] = useState(
+    initialAddress?.phone || userInfo?.phone || ""
+  );
+  const [savingOrder, setSavingOrder] = useState(false);
+  const [loadingContactInfo, setLoadingContactInfo] = useState(false);
+
+  const handleGetContactInfo = async () => {
+    if (loadingContactInfo) return;
+
+    setLoadingContactInfo(true);
+    try {
+      const contactInfo = await getUserContactInfo();
+      setRecipientName(contactInfo.name);
+      setRecipientPhone(contactInfo.phone);
+      toast.success("Đã lấy thông tin người nhận");
+    } catch (error) {
+      console.warn("Failed to get contact information:", error);
+      toast.error("Không thể lấy thông tin người nhận");
+    } finally {
+      setLoadingContactInfo(false);
+    }
+  };
 
   // Tải danh sách tỉnh/thành khi vào trang
   useEffect(() => {
@@ -230,7 +271,7 @@ function ShippingAddressPage() {
   return (
     <form
       className="h-full flex flex-col justify-between"
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault();
 
         if (!provinceCode || !wardCode) {
@@ -252,6 +293,43 @@ function ShippingAddressPage() {
         newAddress.wardCode = wardCode;
         newAddress.wardName = ward?.name ?? "";
         newAddress.detail = detail;
+        newAddress.name = recipientName;
+        newAddress.phone = recipientPhone;
+
+        if (editingOrder) {
+          setSavingOrder(true);
+          try {
+            const userId = await getCurrentUserId();
+            const response = await backendPost<
+              Record<string, string>,
+              { success: boolean; error?: string }
+            >("/update_order_delivery", {
+              order_code: String(editingOrder.id),
+              user_id: userId,
+              shipping_address: formatShippingAddress(newAddress as any),
+              receiver_name: recipientName.trim(),
+              phone_number: recipientPhone.trim(),
+            });
+            if (!response.success) {
+              throw new Error(response.error ?? "update_order_delivery_failed");
+            }
+            refreshOrders();
+            toast.success("Đã cập nhật địa chỉ đơn hàng");
+            navigate(`/order/${editingOrder.id}`, {
+              replace: true,
+              state: {
+                ...editingOrder,
+                delivery: { ...editingOrder.delivery, ...newAddress },
+              },
+            });
+          } catch (error) {
+            console.warn("Failed to update order delivery:", error);
+            toast.error("Không thể cập nhật địa chỉ đơn hàng. Vui lòng thử lại.");
+          } finally {
+            setSavingOrder(false);
+          }
+          return;
+        }
 
         setAddress(newAddress as typeof address);
         toast.success("Đã cập nhật địa chỉ");
@@ -291,34 +369,31 @@ function ShippingAddressPage() {
           />
         </div>
         <div className="bg-section p-4 grid gap-4">
+          <Button
+            htmlType="button"
+            fullWidth
+            loading={loadingContactInfo}
+            onClick={handleGetContactInfo}
+          >
+            Lấy thông tin người nhận
+          </Button>
           <Input
             name="name"
             label="Tên người nhận"
             placeholder="Nhập tên người nhận"
-            defaultValue={address?.name}
+            value={recipientName}
+            onChange={(event) => setRecipientName(event.target.value)}
           />
           <Input
-          name="phone"
-          label="Số điện thoại"
-          placeholder="0912345678"
-          defaultValue={address?.phone}
-          // type="tel"
-          maxLength={10} // Enforces maximum length of 10
-          pattern="^0[0-9]{9}$" // HTML5 validation: must start with 0, followed by 9 digits
-          title="Số điện thoại phải bắt đầu bằng 0 và có đúng 10 chữ số"
-          onKeyPress={(e) => {
-            // Prevent typing any non-numeric characters
-            if (!/[0-9]/.test(e.key)) {
-              e.preventDefault();
-            }
-          }}
-          onChange={(e) => {
-            // If the user types a first character that is not '0', force it to '0'
-            if (e.target.value.length === 1 && e.target.value !== '0') {
-              e.target.value = ''; // Or you can set it to '0' depending on UX preference
-            }
-          }}
-        />
+            name="phone"
+            label="Số điện thoại"
+            placeholder="0912345678"
+            value={recipientPhone}
+            maxLength={10}
+            pattern="^0[0-9]{9}$"
+            title="Số điện thoại phải bắt đầu bằng 0 và có đúng 10 chữ số"
+            onChange={(event) => setRecipientPhone(event.target.value.replace(/\D/g, "").slice(0, 10))}
+          />
         </div>
         <Button
           fullWidth
@@ -326,6 +401,7 @@ function ShippingAddressPage() {
           type="danger"
           prefixIcon={<Icon icon="zi-delete" />}
           onClick={() => {
+            if (editingOrder) return;
             resetAddress();
             toast.success("Đã xóa địa chỉ");
             navigate(-1);
@@ -335,7 +411,7 @@ function ShippingAddressPage() {
         </Button>
       </div>
       <div className="p-6 pt-4 bg-section">
-        <Button htmlType="submit" fullWidth>
+        <Button htmlType="submit" fullWidth loading={savingOrder} disabled={savingOrder}>
           Xong
         </Button>
       </div>

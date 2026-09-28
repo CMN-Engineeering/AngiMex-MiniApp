@@ -7,6 +7,7 @@ import { useAtom } from "jotai";
 import { selectedCartItemIdsState } from "@/state";
 import { useEffect, useState } from "react";
 import { Icon } from "zmp-ui";
+import QuantityInput from "@/components/quantity-input";
 
 const SWIPE_TO_DELTE_OFFSET = 80;
 
@@ -77,7 +78,14 @@ export default function CartItem(props: CartItemProps) {
             )}
           </div>
         </div>
-        <div className="text-sm font-medium">x{quantity}</div>
+        <div className="w-24 flex-none">
+          <QuantityInput
+            value={quantity}
+            minValue={0}
+            maxValue={props.product.stock}
+            onChange={setQuantity}
+          />
+        </div>
       </animated.div>
     </div>
   );

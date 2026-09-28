@@ -82,9 +82,16 @@ function OrderDetailPage() {
 
   return (
     <div className="w-full p-4 space-y-2">
-      <OrderInfo order={order} />
+      <OrderInfo
+        order={order}
+        editable={
+          order.status === "waiting for payment" &&
+          order.delivery.type === "shipping"
+        }
+      />
       <OrderSummary full order={order} />
-      {order.status === "waiting for payment" && (
+      {order.status === "waiting for payment" &&
+        order.paymentStatus === "pending" && (
         <Button className="w-full" onClick={() => setPaying(true)} disabled={paying}>
           Thanh toán
         </Button>

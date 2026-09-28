@@ -6,6 +6,7 @@ export interface QuantityInputProps {
   value: number;
   onChange: (value: number) => void;
   minValue?: number;
+  maxValue?: number;
 }
 
 export default function QuantityInput(props: QuantityInputProps) {
@@ -21,9 +22,17 @@ export default function QuantityInput(props: QuantityInputProps) {
         size="small"
         variant="tertiary"
         className="min-w-0 aspect-square"
-        onClick={() =>
-          props.onChange(Math.max(props.minValue ?? 0, props.value - 1))
+        disabled={
+          props.minValue !== undefined && props.value <= props.minValue
         }
+            onClick={() =>
+              props.onChange(
+                Math.max(
+                  props.minValue ?? 0,
+                  Math.min(props.maxValue ?? Infinity, props.value - 1)
+                )
+              )
+            }
       >
         <MinusIcon width={14} height={14} />
       </Button>
@@ -34,15 +43,25 @@ export default function QuantityInput(props: QuantityInputProps) {
         inputMode="numeric"
         value={localValue}
         onChange={(e) => setLocalValue(e.currentTarget.value)}
-        onBlur={() =>
-          props.onChange(Math.max(props.minValue ?? 0, Number(localValue)))
-        }
+            onBlur={() =>
+              props.onChange(
+                Math.max(
+                  props.minValue ?? 0,
+                  Math.min(props.maxValue ?? Infinity, Number(localValue) || 1)
+                )
+              )
+            }
       />
       <Button
         size="small"
         variant="tertiary"
         className="min-w-0 aspect-square"
-        onClick={() => props.onChange(props.value + 1)}
+            disabled={props.maxValue !== undefined && props.value >= props.maxValue}
+            onClick={() =>
+              props.onChange(
+                Math.min(props.maxValue ?? Infinity, props.value + 1)
+              )
+            }
       >
         <PlusIcon width={14} height={14} />
       </Button>

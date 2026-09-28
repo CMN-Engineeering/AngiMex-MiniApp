@@ -1,3 +1,4 @@
+import { Button } from "zmp-ui";
 import Banners from "./banners";
 import Category from "./category";
 import FlashSales from "./flash-sales";
@@ -10,6 +11,7 @@ const HomePage: React.FunctionComponent = () => {
         <Banners />
       </div> */}
       <FlashSales />
+      
     </div>
   );
 };

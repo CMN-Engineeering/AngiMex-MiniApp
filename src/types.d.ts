@@ -11,8 +11,10 @@ export interface Product {
   id: number;
   name: string;
   price: number;
+  isHidden?: boolean;
   originalPrice?: number;
   image: string;
+  stock: number;
   category: Category;
   detail?: string;
   sizes?: Size[];
@@ -62,10 +64,12 @@ export type Delivery =
   | {
       type: "pickup";
       stationId: number;
+      stationName?: string;
+      stationAddress?: string;
     };
 
-export type OrderStatus = "waiting for payment" | "confirmed" | "completed";
-export type PaymentStatus = "pending" | "success" | "failed";
+export type OrderStatus = "waiting for payment" | "cod" | "confirmed" | "completed";
+export type PaymentStatus = "pending" | "cash on delivery" | "success" | "failed";
 
 export interface Order {
   id: number | string;

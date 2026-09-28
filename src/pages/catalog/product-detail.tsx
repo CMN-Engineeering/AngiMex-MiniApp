@@ -6,6 +6,8 @@ import { formatPrice } from "@/utils/format";
 import ShareButton from "./share-buttont";
 import RelatedProducts from "./related-products";
 import { useAddToCart } from "@/hooks";
+import QuantityInput from "@/components/quantity-input";
+import { useState } from "react";
 import { Button } from "zmp-ui";
 import Section from "@/components/section";
 
@@ -14,7 +16,8 @@ export default function ProductDetailPage() {
   const product = useAtomValue(productState(Number(id)))!;
 
   const navigate = useNavigate();
-  const { addToCart } = useAddToCart(product);
+  const { addToCart, stock } = useAddToCart(product);
+  const [quantity, setQuantity] = useState(1);
 
   return (
     <div className="w-full h-full flex flex-col">
@@ -30,7 +33,10 @@ export default function ProductDetailPage() {
             }}
           />
           <div>
-            <div className="text-xl font-bold text-primary">
+            <div className="text-xl font-bold text-primary"
+            style={{
+              color:'#059747e1'
+            }}>
               {formatPrice(product.price)}
             </div>
             {product.originalPrice && (
@@ -46,7 +52,27 @@ export default function ProductDetailPage() {
                 </span>
               </div>
             )}
-            <div className="text-sm mt-1">{product.name}</div>
+            <div
+            style={{
+              fontSize : "20px",
+              fontWeight: "500"
+            }}>{product.name}</div>
+            <div className="flex items-center gap-4 mt-3">
+              <span className="text-base text-subtitle whitespace-nowrap">
+                Số lượng
+              </span>
+              <div className="w-36 shrink-0">
+                <QuantityInput
+                  value={quantity}
+                  minValue={1}
+                  maxValue={stock}
+                  onChange={setQuantity}
+                />
+              </div>
+              <span className="text-base text-subtitle whitespace-nowrap">
+                {stock} sản phẩm có sẵn
+              </span>
+            </div>
           </div>
           <ShareButton product={product} />
         </div>
@@ -70,8 +96,9 @@ export default function ProductDetailPage() {
       <div className="flex-none grid grid-cols-2 gap-2 py-3 px-4 bg-section">
         <Button
           variant="tertiary"
+          disabled={product.stock === 0}
           onClick={() => {
-            addToCart(1, {
+            addToCart(quantity, {
               toast: true,
             });
           }}
@@ -79,8 +106,9 @@ export default function ProductDetailPage() {
           Thêm vào giỏ
         </Button>
         <Button
+          disabled={product.stock === 0}
           onClick={() => {
-            addToCart(1);
+            addToCart(quantity);
             navigate("/cart", {
               viewTransition: true,
             });

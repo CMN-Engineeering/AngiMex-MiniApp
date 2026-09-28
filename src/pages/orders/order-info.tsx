@@ -4,22 +4,29 @@ import { formatShippingAddress } from "@/utils/format";
 import { Icon, List } from "zmp-ui";
 import DeliverySummary from "../cart/delivery-summary";
 
-function OrderInfo(props: { order: Order }) {
+function OrderInfo(props: { order: Order; editable?: boolean }) {
   return (
     <List noSpacing className="bg-section rounded-lg">
       {props.order.delivery.type === "pickup" ? (
         <DeliverySummary
           icon={<HomeIcon />}
           title="Giao đến"
-          subtitle={props.order.delivery.name}
-          description={props.order.delivery.address}
+          subtitle={props.order.delivery.stationName ?? ""}
+          description={
+            props.order.delivery.stationAddress ??
+            `Điểm nhận hàng ${props.order.delivery.stationId}`
+          }
+          linkTo={props.editable ? "/shipping-address" : undefined}
+          linkState={props.editable ? { order: props.order } : undefined}
         />
       ) : (
         <DeliverySummary
           icon={<LocationMarkerLineIcon />}
           title="Giao đến"
-          subtitle={props.order.delivery.name}
+          subtitle={`${props.order.delivery.name} - ${props.order.delivery.phone}`}
           description={formatShippingAddress(props.order.delivery)}
+          linkTo={props.editable ? "/shipping-address" : undefined}
+          linkState={props.editable ? { order: props.order } : undefined}
         />
       )}
       {props.order.note && (

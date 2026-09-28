@@ -8,23 +8,34 @@ function DeliverySummary(props: {
   subtitle?: string;
   description?: string;
   linkTo?: string;
+  linkState?: unknown;
 }) {
   return (
     <List.Item
+    
       prefix={props.icon}
       suffix={
         props.linkTo && (
-          <TransitionLink to={props.linkTo} className="text-xs text-primary">
+          <TransitionLink
+            to={props.linkTo}
+            state={props.linkState}
+            style={{
+              fontWeight:'500',
+              fontSize:'13px',
+              color:'green'
+            }}
+          >
             Thay đổi
           </TransitionLink>
         )
       }
+      
       title={props.title}
     >
       <div className="flex-1 flex flex-col space-y-0.5">
         {props.subtitle && <span className="text-sm">{props.subtitle}</span>}
         {props.description && (
-          <span className="text-xs text-inactive">{props.description}</span>
+          <span className="text-xs" style={{color:'#4A4A4A'}}>{props.description}</span>
         )}
       </div>
     </List.Item>
