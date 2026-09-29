@@ -2,6 +2,7 @@ import fs from 'fs';
 import https from 'https';
 import express from 'express'; // if you're using Express — adjust if not
 import pg from 'pg'; 
+import CryptoJS from 'crypto-js';
 
 const { Pool } = pg;
 const pool = new Pool({
@@ -241,6 +242,7 @@ app.get('/order_confirm', async (req, res) => {
       [order_code]
     );
     await client.query('COMMIT');
+    await updateZaloOrderStatus(order_code, 'bank', 1);
 
     const order = result.rows[0];
     const orderLines = Object.entries(order.order_details || {})
@@ -639,37 +641,230 @@ app.post('/update_order_delivery', async (req, res) => {
     res.status(500).json({ success: false, error: 'Database error' });
   }
 });
+// Ensure this key matches the one used in your /get_mac endpoint
+const ZALO_PRIVATE_KEY = "02734bfb557f0a93d3b741a45292e16f";
+const ZALO_APP_ID = "969578349712450924"; // Replace with your Mini App ID
+
+async function updateZaloOrderStatus(orderId, method, resultCode = 1) {
+  try {
+    // Generate MAC for updateOrderStatus
+    const dataStr = `appId=${ZALO_APP_ID}&orderId=${orderId}&resultCode=${resultCode}&privateKey=${ZALO_PRIVATE_KEY}`;
+    const mac = CryptoJS.HmacSHA256(dataStr, ZALO_PRIVATE_KEY).toString();
+
+    // Determine correct endpoint based on method
+    const endpointType = method === 'cod' ? 'cod-callback-payment' : 'bank-callback-payment';
+    const url = `https://payment-mini.zalo.me/api/transaction/${ZALO_APP_ID}/${endpointType}`;
+
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        appId: ZALO_APP_ID,
+        orderId: String(orderId),
+        resultCode: Number(resultCode),
+        mac: mac
+      })
+    });
+    console.log(`Updated Zalo order status for ${orderId}`);
+  } catch (err) {
+    console.error(`Failed to update Zalo order status for ${orderId}:`, err);
+  }
+}
+// --- Zalo Checkout SDK Webhook: COD ---
+app.post('/cod', async (req, res) => {
+  
+  try {
+    const { data, mac } = req.body || {};
+    if (!data || !mac) {
+      return res.json({ returnCode: 0, returnMessage: 'Missing payload' });
+    }
+
+    const { appId, orderId, method } = data;
+    
+    // 1. Zalo MAC generation logic for Checkout SDK notify webhook
+    const dataStr = `appId=${appId}&orderId=${orderId}&method=${method}`;
+    const generatedMac = CryptoJS.HmacSHA256(dataStr, ZALO_PRIVATE_KEY).toString();
+
+    // 2. Validate MAC to ensure request is genuinely from Zalo
+    if (generatedMac !== mac) {
+      return res.json({ returnCode: 0, returnMessage: 'Mac validation failed' });
+    }
+
+    if (method !== 'COD') {
+      console.warn(`Unexpected method ${method} in /cod webhook`);
+    }
+
+    // 3. Update order in database
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const orderRes = await client.query(
+        `SELECT * FROM orders WHERE order_code = $1 FOR UPDATE`,
+        [orderId]
+      );
+
+      if (orderRes.rowCount > 0) {
+        // Acknowledge COD selection
+        await client.query(
+          `UPDATE orders SET order_state = 'cod' WHERE order_code = $1`,
+          [orderId]
+        );
+      }
+      await client.query('COMMIT');
+    } catch (dbError) {
+      await client.query('ROLLBACK');
+      throw dbError;
+    } finally {
+      client.release();
+    }
+
+    // 4. Return exact success payload required by Zalo
+    return res.json({ returnCode: 1, returnMessage: 'success' });
+  } catch (error) {
+    console.error('Error in /cod webhook:', error);
+    return res.json({ returnCode: 0, returnMessage: 'Server error' });
+  }
+});
+
+
+// --- Zalo Checkout SDK Webhook: BANK ---
+app.post('/bank', async (req, res) => {
+  try {
+    const { data, mac } = req.body || {};
+    if (!data || !mac) {
+      return res.json({ returnCode: 0, returnMessage: 'Missing payload' });
+    }
+
+    const { appId, orderId, method } = data;
+    
+    // 1. Zalo MAC generation logic for Checkout SDK notify webhook
+    const dataStr = `appId=${appId}&orderId=${orderId}&method=${method}`;
+    const generatedMac = CryptoJS.HmacSHA256(dataStr, ZALO_PRIVATE_KEY).toString();
+
+    // 2. Validate MAC
+    if (generatedMac !== mac) {
+      return res.json({ returnCode: 0, returnMessage: 'Mac validation failed' });
+    }
+
+    if (method !== 'BANK') {
+      console.warn(`Unexpected method ${method} in /bank webhook`);
+    }
+
+    // 3. Update order in database
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const orderRes = await client.query(
+        `SELECT * FROM orders WHERE order_code = $1 FOR UPDATE`,
+        [orderId]
+      );
+
+      if (orderRes.rowCount > 0) {
+        // Mark the order as 'waiting for payment' since Bank Transfer was selected
+        await client.query(
+          `UPDATE orders SET order_state = 'waiting for payment' WHERE order_code = $1`,
+          [orderId]
+        );
+      }
+      await client.query('COMMIT');
+    } catch (dbError) {
+      await client.query('ROLLBACK');
+      throw dbError;
+    } finally {
+      client.release();
+    }
+
+    // 4. Return exact success payload required by Zalo
+    return res.json({ returnCode: 1, returnMessage: 'success' });
+  } catch (error) {
+    console.error('Error in /bank webhook:', error);
+    return res.json({ returnCode: 0, returnMessage: 'Server error' });
+  }
+});
+app.get('/get_mac', async (req, res) => {
+  const { body } = req.query;
+
+  if (!body) {
+    return res.status(400).json({ success: false, error: 'Missing body parameter' });
+  }
+
+  // Ensure you paste your actual private key from the Zalo platform here
+  
+  try {
+    // 1. Parse the stringified payload sent from the frontend back into an object
+    const params = JSON.parse(body);
+
+    // 2. Sort keys and construct the dataMac string exactly as Zalo requires
+    const dataMac = Object.keys(params)
+      .sort() // Sort keys alphabetically
+      .map(
+        (key) =>
+          `${key}=${
+            typeof params[key] === "object"
+              ? JSON.stringify(params[key])
+              : params[key]
+          }`
+      ) // Format as "key=value" (stringifying nested objects/arrays like 'item')
+      .join("&"); // Join with "&"
+
+    console.log(`String to hash: ${dataMac}`);
+
+    // 3. Generate the MAC using HmacSHA256
+    const mac = CryptoJS.HmacSHA256(
+      dataMac,
+      ZALO_PRIVATE_KEY
+    ).toString();
+    
+    console.log(`Generated Mac: ${mac}`);
+    
+    // Serve the MAC back to the frontend as a JSON response
+    res.json({ success: true, mac: mac });
+  } catch (e) {
+    console.error('Error generating MAC:', e);
+    res.status(500).json({ success: false, error: 'Failed to generate MAC' });
+  }
+});
 
 app.get('/delete_order', async (req, res) => {
   const { order_code, user_id } = req.query;
 
-  if (!order_code || !user_id) {
-    return res.status(400).json({ success: false, error: 'missing order_code or user_id' });
+  if (!order_code) {
+    return res.status(400).json({ success: false, error: 'missing order_code' });
   }
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const orderResult = await client.query(
-      `SELECT order_details, stock_reserved FROM orders
-        WHERE order_code = $1 AND user_id = $2 AND order_state IN ('waiting for payment', 'cod')
-       FOR UPDATE`,
-      [String(order_code), String(user_id)]
-    );
+
+    // Build query depending on whether user_id is passed (admin vs client)
+    const selectQuery = user_id
+      ? `SELECT order_details, stock_reserved FROM orders
+         WHERE order_code = $1 AND user_id = $2 AND order_state IN ('waiting for payment', 'cod')
+         FOR UPDATE`
+      : `SELECT order_details, stock_reserved FROM orders
+         WHERE order_code = $1 AND order_state IN ('waiting for payment', 'cod')
+         FOR UPDATE`;
+    
+    const params = user_id ? [String(order_code), String(user_id)] : [String(order_code)];
+    const orderResult = await client.query(selectQuery, params);
 
     if (orderResult.rowCount === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ success: false, error: 'order_not_found_or_not_pending' });
     }
 
+    // Restore reserved stock if item was reserved
     if (orderResult.rows[0].stock_reserved) {
       await adjustProductStock(client, orderResult.rows[0].order_details, 'increase');
     }
-    await client.query(
-      `DELETE FROM orders
-        WHERE order_code = $1 AND user_id = $2 AND order_state IN ('waiting for payment', 'cod')`,
-      [String(order_code), String(user_id)]
-    );
+
+    const deleteQuery = user_id
+      ? `DELETE FROM orders
+         WHERE order_code = $1 AND user_id = $2 AND order_state IN ('waiting for payment', 'cod')`
+      : `DELETE FROM orders
+         WHERE order_code = $1 AND order_state IN ('waiting for payment', 'cod')`;
+
+    await client.query(deleteQuery, params);
     await client.query('COMMIT');
     res.json({ success: true });
   } catch (error) {
@@ -800,7 +995,7 @@ app.get('/complete_order', async (req, res) => {
     const result = await pool.query(
       `UPDATE orders
        SET order_state = 'completed', stock_reserved = FALSE
-       WHERE order_code = $1 AND order_state = 'confirmed'
+       WHERE order_code = $1 AND order_state IN ('confirmed', 'cod')
        RETURNING order_code`,
       [order_code]
     );
@@ -808,14 +1003,15 @@ app.get('/complete_order', async (req, res) => {
     if (result.rowCount === 0) {
       return res.status(404).json({ success: false, error: 'order_not_found' });
     }
-
+    if (result.rows[0].order_state === 'cod') {
+       await updateZaloOrderStatus(order_code, 'cod', 1);
+    }
     res.json({ success: true });
   } catch (error) {
     console.error('Error completing order:', error);
     res.status(500).json({ success: false, error: 'Database error' });
   }
 });
-
 // Restore reserved stock when a paid order cannot be delivered.
 app.post('/fail_order_delivery', async (req, res) => {
   const { order_code } = req.body;
@@ -851,6 +1047,8 @@ app.post('/fail_order_delivery', async (req, res) => {
       [String(order_code)]
     );
     await client.query('COMMIT');
+    await updateZaloOrderStatus(order_code, 'bank', -1);
+    
     res.json({ success: true });
   } catch (error) {
     await client.query('ROLLBACK');
