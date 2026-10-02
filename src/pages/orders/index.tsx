@@ -23,9 +23,6 @@ function OrdersPage() {
       <Tabs.Tab key="cod" label="Thanh toán khi nhận hàng">
         <OrderList ordersState={ordersState("cod")} />
       </Tabs.Tab>
-      <Tabs.Tab key="waiting for payment" label="Chờ thanh toán">
-        <OrderList ordersState={ordersState("waiting for payment")} />
-      </Tabs.Tab>
       <Tabs.Tab key="confirmed" label="Thanh toán thành công">
         <OrderList ordersState={ordersState("confirmed")} />
       </Tabs.Tab>

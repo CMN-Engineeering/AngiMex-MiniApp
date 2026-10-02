@@ -32,6 +32,8 @@ pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS note VARCHAR(100);`)
   .catch(err => console.error("Error adding order note column:", err));
 pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS stock_reserved BOOLEAN DEFAULT FALSE;`)
   .catch(err => console.error("Error adding stock reservation column:", err));
+pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS checkout_order_id VARCHAR(100) UNIQUE;`)
+  .catch(err => console.error("Error adding Checkout order ID column:", err));
 const app = express();
 app.use(express.json());
 
@@ -166,6 +168,29 @@ async function sendTelegramMessage(text) {
   }
 }
 
+async function sendCodOrderNotification(order) {
+  const orderLines = Object.entries(order.order_details || {})
+    .filter(([, quantity]) => Number.isFinite(Number(quantity)))
+    .map(([name, quantity]) => `- ${escapeHtml(name)}: ${Number(quantity)}`)
+    .join('\n');
+
+  await sendTelegramMessage(
+    [
+      '📦 <b>Đơn hàng COD mới</b>',
+      `Mã đơn: <code>${escapeHtml(order.order_code)}</code>`,
+      `User ID: <code>${escapeHtml(order.user_id)}</code>`,
+      `Số tiền: ${Number(order.amount).toLocaleString('vi-VN')}đ`,
+      order.receiver_name ? `Tên người nhận hàng: ${escapeHtml(order.receiver_name)}` : null,
+      order.phone_number ? `SĐT: ${escapeHtml(order.phone_number)}` : null,
+      order.note ? `Ghi chú: ${escapeHtml(order.note)}` : null,
+      order.shipping_address ? `Địa chỉ: ${escapeHtml(order.shipping_address)}` : null,
+      orderLines ? `Chi tiết đơn hàng:\n${orderLines}` : null,
+    ]
+      .filter(Boolean)
+      .join('\n')
+  );
+}
+
 app.post('/webhooks', (req, res) => {
   console.log(req.body);
   const code = String(req.body.code ?? req.body.order_code ?? '').trim();
@@ -242,7 +267,7 @@ app.get('/order_confirm', async (req, res) => {
       [order_code]
     );
     await client.query('COMMIT');
-    await updateZaloOrderStatus(order_code, 'bank', 1);
+    await updateZaloOrderStatus(orderInfo.checkout_order_id || order_code, 'bank', 1);
 
     const order = result.rows[0];
     const orderLines = Object.entries(order.order_details || {})
@@ -369,26 +394,16 @@ app.get('/order_cod', async (req, res) => {
     await adjustProductStock(client, orderBreakdown, 'decrease');
 
     await client.query('COMMIT');
-    const orderLines = Object.entries(orderBreakdown || {})
-      .filter(([, qty]) => Number.isFinite(Number(qty)))
-      .map(([type, qty]) => `- ${escapeHtml(type)}: ${Number(qty)}`)
-      .join('\n');
-
-    await sendTelegramMessage(
-      [
-        '📦 <b>Đơn hàng COD mới</b>',
-        `Mã đơn: <code>${escapeHtml(targetOrderCode)}</code>`,
-        `User ID: <code>${escapeHtml(user_id)}</code>`,
-        `Số tiền: ${Number(amount).toLocaleString('vi-VN')}đ`,
-        receiver_name ? `Tên người nhận hàng: ${escapeHtml(receiver_name)}` : null,
-        phone_number ? `SĐT: ${escapeHtml(phone_number)}` : null,
-        note ? `Ghi chú: ${escapeHtml(note)}` : null,
-        shipping_address ? `Địa chỉ: ${escapeHtml(shipping_address)}` : null,
-        orderLines ? `Chi tiết đơn hàng:\n${orderLines}` : null,
-      ]
-        .filter(Boolean)
-        .join('\n')
-    );
+    await sendCodOrderNotification({
+      order_code: targetOrderCode,
+      user_id: String(user_id),
+      amount,
+      receiver_name,
+      phone_number,
+      note,
+      shipping_address,
+      order_details: orderBreakdown,
+    });
     res.json({ success: true, order_code: targetOrderCode });
   } catch (dbError) {
     await client.query('ROLLBACK');
@@ -655,7 +670,7 @@ async function updateZaloOrderStatus(orderId, method, resultCode = 1) {
     const endpointType = method === 'cod' ? 'cod-callback-payment' : 'bank-callback-payment';
     const url = `https://payment-mini.zalo.me/api/transaction/${ZALO_APP_ID}/${endpointType}`;
 
-    await fetch(url, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -665,11 +680,59 @@ async function updateZaloOrderStatus(orderId, method, resultCode = 1) {
         mac: mac
       })
     });
+    const responseData = await response.json();
+    if (!response.ok || (responseData.err ?? responseData.error) !== 0) {
+      throw new Error(responseData.msg || `Zalo returned HTTP ${response.status}`);
+    }
     console.log(`Updated Zalo order status for ${orderId}`);
+    return true;
   } catch (err) {
     console.error(`Failed to update Zalo order status for ${orderId}:`, err);
+    return false;
   }
 }
+app.post('/checkout_order_link', async (req, res) => {
+  const { order_code, checkout_order_id, method } = req.body || {};
+  if (!order_code || !checkout_order_id) {
+    return res.status(400).json({ success: false, error: 'missing order identifiers' });
+  }
+  if (method !== undefined && !['BANK', 'COD'].includes(method)) {
+    return res.status(400).json({ success: false, error: 'invalid payment method' });
+  }
+
+  try {
+    const result = await pool.query(
+      `WITH target AS (
+         SELECT order_code, order_state
+         FROM orders
+         WHERE order_code = $1
+           AND order_state IN ('reserved', 'waiting for payment', 'cod')
+           AND (checkout_order_id IS NULL OR checkout_order_id = $2)
+         FOR UPDATE
+       ), updated AS (
+         UPDATE orders AS order_row
+         SET checkout_order_id = $2,
+             order_state = CASE WHEN $3 = 'COD' THEN 'cod' ELSE order_row.order_state END
+         FROM target
+         WHERE order_row.order_code = target.order_code
+         RETURNING order_row.*, target.order_state AS previous_order_state
+       )
+       SELECT * FROM updated`,
+      [String(order_code), String(checkout_order_id), method ?? null]
+    );
+    if (result.rowCount === 0) {
+      return res.status(409).json({ success: false, error: 'order_not_available' });
+    }
+    const linkedOrder = result.rows[0];
+    if (method === 'COD' && linkedOrder.previous_order_state !== 'cod') {
+      await sendCodOrderNotification(linkedOrder);
+    }
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Failed to link Checkout order:', error);
+    res.status(500).json({ success: false, error: 'database_error' });
+  }
+});
 // --- Zalo Checkout SDK Webhook: COD ---
 app.post('/cod', async (req, res) => {
   
@@ -686,31 +749,30 @@ app.post('/cod', async (req, res) => {
     const generatedMac = CryptoJS.HmacSHA256(dataStr, ZALO_PRIVATE_KEY).toString();
 
     // 2. Validate MAC to ensure request is genuinely from Zalo
-    if (generatedMac !== mac) {
+    if (appId !== ZALO_APP_ID || method !== 'COD' || generatedMac !== mac) {
       return res.json({ returnCode: 0, returnMessage: 'Mac validation failed' });
     }
 
-    if (method !== 'COD') {
-      console.warn(`Unexpected method ${method} in /cod webhook`);
-    }
-
-    // 3. Update order in database
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       const orderRes = await client.query(
-        `SELECT * FROM orders WHERE order_code = $1 FOR UPDATE`,
+        `SELECT * FROM orders WHERE checkout_order_id = $1 FOR UPDATE`,
         [orderId]
       );
 
-      if (orderRes.rowCount > 0) {
-        // Acknowledge COD selection
-        await client.query(
-          `UPDATE orders SET order_state = 'cod' WHERE order_code = $1`,
-          [orderId]
-        );
+      if (orderRes.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.json({ returnCode: 0, returnMessage: 'Order not found' });
       }
+      await client.query(
+        `UPDATE orders SET order_state = 'cod' WHERE order_code = $1`,
+        [orderRes.rows[0].order_code]
+      );
       await client.query('COMMIT');
+      if (orderRes.rows[0].order_state !== 'cod') {
+        await sendCodOrderNotification(orderRes.rows[0]);
+      }
     } catch (dbError) {
       await client.query('ROLLBACK');
       throw dbError;
@@ -742,30 +804,26 @@ app.post('/bank', async (req, res) => {
     const generatedMac = CryptoJS.HmacSHA256(dataStr, ZALO_PRIVATE_KEY).toString();
 
     // 2. Validate MAC
-    if (generatedMac !== mac) {
+    if (appId !== ZALO_APP_ID || method !== 'BANK' || generatedMac !== mac) {
       return res.json({ returnCode: 0, returnMessage: 'Mac validation failed' });
     }
 
-    if (method !== 'BANK') {
-      console.warn(`Unexpected method ${method} in /bank webhook`);
-    }
-
-    // 3. Update order in database
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       const orderRes = await client.query(
-        `SELECT * FROM orders WHERE order_code = $1 FOR UPDATE`,
+        `SELECT order_code, order_state FROM orders WHERE checkout_order_id = $1 FOR UPDATE`,
         [orderId]
       );
 
-      if (orderRes.rowCount > 0) {
-        // Mark the order as 'waiting for payment' since Bank Transfer was selected
-        await client.query(
-          `UPDATE orders SET order_state = 'waiting for payment' WHERE order_code = $1`,
-          [orderId]
-        );
+      if (orderRes.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.json({ returnCode: 0, returnMessage: 'Order not found' });
       }
+      await client.query(
+        `UPDATE orders SET order_state = 'waiting for payment' WHERE order_code = $1`,
+        [orderRes.rows[0].order_code]
+      );
       await client.query('COMMIT');
     } catch (dbError) {
       await client.query('ROLLBACK');
@@ -838,10 +896,10 @@ app.get('/delete_order', async (req, res) => {
 
     // Build query depending on whether user_id is passed (admin vs client)
     const selectQuery = user_id
-      ? `SELECT order_details, stock_reserved FROM orders
+      ? `SELECT * FROM orders
          WHERE order_code = $1 AND user_id = $2 AND order_state IN ('waiting for payment', 'cod')
          FOR UPDATE`
-      : `SELECT order_details, stock_reserved FROM orders
+      : `SELECT * FROM orders
          WHERE order_code = $1 AND order_state IN ('waiting for payment', 'cod')
          FOR UPDATE`;
     
@@ -866,6 +924,28 @@ app.get('/delete_order', async (req, res) => {
 
     await client.query(deleteQuery, params);
     await client.query('COMMIT');
+
+    const deletedOrder = orderResult.rows[0];
+    const orderLines = Object.entries(deletedOrder.order_details || {})
+      .filter(([, quantity]) => Number.isFinite(Number(quantity)))
+      .map(([name, quantity]) => `- ${escapeHtml(name)}: ${Number(quantity)}`)
+      .join('\n');
+    await sendTelegramMessage(
+      [
+        '❌ <b>Đơn hàng đã bị hủy</b>',
+        `Mã đơn: <code>${escapeHtml(deletedOrder.order_code)}</code>`,
+        `User ID: <code>${escapeHtml(deletedOrder.user_id)}</code>`,
+        `Trạng thái trước khi hủy: ${escapeHtml(deletedOrder.order_state)}`,
+        `Số tiền: ${Number(deletedOrder.amount).toLocaleString('vi-VN')}đ`,
+        deletedOrder.receiver_name ? `Tên người nhận hàng: ${escapeHtml(deletedOrder.receiver_name)}` : null,
+        deletedOrder.phone_number ? `SĐT: ${escapeHtml(deletedOrder.phone_number)}` : null,
+        deletedOrder.shipping_address ? `Địa chỉ: ${escapeHtml(deletedOrder.shipping_address)}` : null,
+        deletedOrder.note ? `Ghi chú: ${escapeHtml(deletedOrder.note)}` : null,
+        orderLines ? `Chi tiết đơn hàng:\n${orderLines}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n')
+    );
     res.json({ success: true });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -993,18 +1073,27 @@ app.get('/complete_order', async (req, res) => {
 
   try {
     const result = await pool.query(
-      `UPDATE orders
-       SET order_state = 'completed', stock_reserved = FALSE
-       WHERE order_code = $1 AND order_state IN ('confirmed', 'cod')
-       RETURNING order_code`,
+      `WITH target AS (
+         SELECT order_code, order_state
+         FROM orders
+         WHERE order_code = $1 AND order_state IN ('confirmed', 'cod')
+         FOR UPDATE
+       ), updated AS (
+         UPDATE orders AS order_row
+         SET order_state = 'completed', stock_reserved = FALSE
+         FROM target
+         WHERE order_row.order_code = target.order_code
+         RETURNING target.order_state AS previous_state, order_row.checkout_order_id
+       )
+       SELECT previous_state, checkout_order_id FROM updated`,
       [order_code]
     );
 
     if (result.rowCount === 0) {
       return res.status(404).json({ success: false, error: 'order_not_found' });
     }
-    if (result.rows[0].order_state === 'cod') {
-       await updateZaloOrderStatus(order_code, 'cod', 1);
+    if (result.rows[0].previous_state === 'cod') {
+       await updateZaloOrderStatus(result.rows[0].checkout_order_id || order_code, 'cod', 1);
     }
     res.json({ success: true });
   } catch (error) {
@@ -1024,7 +1113,7 @@ app.post('/fail_order_delivery', async (req, res) => {
   try {
     await client.query('BEGIN');
     const orderResult = await client.query(
-      `SELECT order_details, stock_reserved
+      `SELECT order_details, stock_reserved, checkout_order_id
        FROM orders
        WHERE order_code = $1 AND order_state = 'confirmed'
        FOR UPDATE`,
@@ -1047,7 +1136,11 @@ app.post('/fail_order_delivery', async (req, res) => {
       [String(order_code)]
     );
     await client.query('COMMIT');
-    await updateZaloOrderStatus(order_code, 'bank', -1);
+    await updateZaloOrderStatus(
+      orderResult.rows[0].checkout_order_id || order_code,
+      'bank',
+      -1
+    );
     
     res.json({ success: true });
   } catch (error) {

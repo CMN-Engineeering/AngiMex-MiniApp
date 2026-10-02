@@ -13,7 +13,11 @@ import { refreshOrdersState } from "@/state";
 const today = new Date()
 const tomorrow = new Date(today)
 tomorrow.setDate(tomorrow.getDate() + 1)
-function OrderSummary(props: { order: Order; full?: boolean }) {
+function OrderSummary(props: {
+  order: Order;
+  full?: boolean;
+  showCancel?: boolean;
+}) {
   const navigate = useNavigate();
   const refreshOrders = useSetAtom(refreshOrdersState);
   const [deleting, setDeleting] = useState(false);
@@ -95,9 +99,14 @@ function OrderSummary(props: { order: Order; full?: boolean }) {
           {formatPrice(props.order.total)}
         </div>
       </div>
-      {!props.full && (props.order.status === "waiting for payment" || props.order.status === "cod") && (
+      {((!props.full &&
+        props.order.status === "waiting for payment" &&
+        props.order.paymentStatus === "pending") ||
+        (props.showCancel &&
+          (props.order.status === "waiting for payment" ||
+            props.order.status === "cod"))) && (
         <div className="px-4 pb-3" style={{display:"flex"}}>
-          {props.order.status === "waiting for payment" && props.order.paymentStatus === "pending" && (
+          {!props.full && props.order.status === "waiting for payment" && props.order.paymentStatus === "pending" && (
             <Button
               className="w-full"
               style={{
@@ -114,28 +123,34 @@ function OrderSummary(props: { order: Order; full?: boolean }) {
             Thanh toán
             </Button>
           )}
-          <Button
-            style={{
-              width:'100%',
-              padding:0
-            }}
-            variant="tertiary"
-            prefixIcon={<Icon icon="zi-delete" />}
-            onClick={(event) => {
-              event.stopPropagation();
-              setConfirmingDelete(true);
-            }}
-            disabled={deleting}
-          >
-            Xóa đơn hàng
-          </Button>
+          {props.showCancel &&
+            (props.order.status === "waiting for payment" ||
+              props.order.status === "cod") && (
+              <Button
+                style={{
+                  width: "100%",
+                  padding: 0,
+                  backgroundColor: "#E11A45",
+                  color: "white",
+                }}
+                variant="tertiary"
+                prefixIcon={<Icon icon="zi-delete" />}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setConfirmingDelete(true);
+                }}
+                disabled={deleting}
+              >
+                Hủy đơn hàng
+              </Button>
+            )}
         </div>
       )}
 
       <Modal
         visible={confirmingDelete}
-        title="Xóa đơn hàng"
-        description="Bạn có chắc muốn xóa đơn hàng đang chờ thanh toán không?"
+        title="Hủy đơn hàng"
+        description="Bạn có chắc chắn muốn hủy đơn hàng không?"
         maskClosable={!deleting}
         onClose={returnToOrders}
         actions={[

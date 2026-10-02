@@ -89,7 +89,7 @@ function OrderDetailPage() {
           order.delivery.type === "shipping"
         }
       />
-      <OrderSummary full order={order} />
+      <OrderSummary full order={order} showCancel />
       {order.status === "waiting for payment" &&
         order.paymentStatus === "pending" && (
         <Button className="w-full" onClick={() => setPaying(true)} disabled={paying}>

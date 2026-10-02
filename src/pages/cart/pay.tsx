@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { CheckoutSDK, events, EventName } from "zmp-sdk/apis";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { events, EventName, CheckoutSDK } from "zmp-sdk/apis";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 
 import { loadable } from "jotai/utils";
@@ -23,6 +23,7 @@ import { createQrUrl, downloadQr, getCurrentUserId } from "@/utils/backend";
 const ZALO_CHECKOUT_SECRET_KEY = ""
 const NEW_ORDER_CODE_URL = "https://cmnes.com:4488/new_order_code";
 const GET_MAC_URL = "https://cmnes.com:4488/get_mac";
+const CHECKOUT_ORDER_LINK_URL = "https://cmnes.com:4488/checkout_order_link";
 const ORDER_WAIT_FOR_PAYING = "https://cmnes.com:4488/order_paying";
 const ORDER_COD = "https://cmnes.com:4488/order_cod";
 const ORDER_CONFIRM_URL = "https://cmnes.com:4488/order_confirm";
@@ -98,12 +99,14 @@ export default function Pay() {
   const refreshOrders = useSetAtom(refreshOrdersState);
   const navigate = useNavigate();
   const [paying, setPaying] = useState(false);
+  const [checkingCheckoutPayment, setCheckingCheckoutPayment] = useState(false);
   const [reserving, setReserving] = useState(false);
   const [confirmingClose, setConfirmingClose] = useState(false);
   const [confirmingOrder, setConfirmingOrder] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<"qr" | "cod">("qr");
-  const [selectedMethodName, setSelectedMethodName] = useState<string>("Chuyển khoản (QR)");
+  const [selectedMethodName, setSelectedMethodName] = useState<string>("Chuyển khoản ngân hàng");
   const lastErrorCodeRef = useRef<string | undefined>(undefined);
+  const finalizedOrderCodeRef = useRef<string | null>(null);
 
   const deliveryMode = useAtomValue(deliveryModeState);
   const shippingAddress = useAtomValue(shippingAddressState);
@@ -237,17 +240,7 @@ export default function Pay() {
         setOrderCode(savedOrderCode || null);
         console.log(`Successfully put order ${savedOrderCode} to COD`);
 
-        activeOrderCode = null;
-        setCart([]);
-        setNote("");
-        setOrderNum(orderNum + 1);
-        refreshOrders();
-
-        toast.success("Đặt hàng thành công. Cảm ơn bạn đã mua hàng!", {
-          icon: "🎉",
-          duration: 3000,
-        });
-        navigate("/orders/cod", { viewTransition: true });
+        finalizeSuccessfulOrder("cod");
       } else {
         toast.error("Không thể tạo đơn hàng. Vui lòng thử lại.");
       }
@@ -272,7 +265,7 @@ export default function Pay() {
           setSelectedMethodName(displayName || "Thanh toán khi nhận hàng (COD)");
         } else {
           setPaymentMethod("qr");
-          setSelectedMethodName(displayName || "Chuyển khoản (QR)");
+          setSelectedMethodName(displayName || "Chuyển khoản ngân hàng");
         }
       },
       fail: (err) => {
@@ -299,57 +292,111 @@ export default function Pay() {
   }
 
   const createOrder = async () => {
+    if (reserving || paying) return;
+    if (
+      !cart.length ||
+      !receiverName.trim() ||
+      !/^0\d{9}$/.test(phoneNumber.trim()) ||
+      !shippingAddressText.trim()
+    ) {
+      toast.error(
+        "Vui lòng kiểm tra tên, số điện thoại và địa chỉ giao hàng trước khi gửi.",
+        { duration: 5000 }
+      );
+      return;
+    }
+
+    setReserving(true);
+
     let currentOrderCode = orderCode;
-    
-    if (!currentOrderCode) {
-      try {
+
+    try {
+      if (!currentOrderCode) {
         const userID = await getCurrentUserId();
         currentOrderCode = await reserveOrderCode(userID);
         setOrderCode(currentOrderCode);
-      } catch (error) {
-        console.error("Failed to reserve order code:", error);
-        toast.error("Không thể tạo mã đơn hàng. Vui lòng thử lại.");
-        return; 
       }
+
+      const userID = await getCurrentUserId();
+      const orderBreakdown: Record<string, number> = {};
+      for (const item of cart) {
+        orderBreakdown[item.product.name] =
+          (orderBreakdown[item.product.name] ?? 0) + item.quantity;
+      }
+
+      const prepareUrl = new URL(ORDER_WAIT_FOR_PAYING);
+      prepareUrl.searchParams.set("order_code", currentOrderCode);
+      prepareUrl.searchParams.set("order_state", "pending");
+      prepareUrl.searchParams.set("amount", String(totalAmount));
+      prepareUrl.searchParams.set("shipping_address", shippingAddressText);
+      prepareUrl.searchParams.set("receiver_name", receiverName);
+      prepareUrl.searchParams.set("phone_number", phoneNumber);
+      prepareUrl.searchParams.set("note", note.slice(0, 100));
+      prepareUrl.searchParams.set("user_id", userID);
+      prepareUrl.searchParams.set("order", JSON.stringify(orderBreakdown));
+
+      const prepareResponse = await fetch(prepareUrl.toString());
+      const prepareData = await prepareResponse.json();
+      if (!prepareResponse.ok || !prepareData.success) {
+        throw new Error(prepareData.error_code ?? "order_prepare_failed");
+      }
+
+      const items = cart.map((cartItem) => ({
+        id: String(cartItem.product.id),
+        amount: cartItem.product.price * cartItem.quantity,
+      }));
+
+      const body = {
+        desc: `Thanh toán đơn hàng ${currentOrderCode}`,
+        item: items,
+        amount: totalAmount,
+        method: JSON.stringify({
+          id: paymentMethod === "cod" ? "COD" : "BANK",
+          isCustom: false,
+        }),
+      };
+
+      const mac = await getMac(body);
+      if (!mac) return;
+
+      await CheckoutSDK.createOrder({
+        desc: body.desc,
+        item: body.item,
+        amount: body.amount,
+        method: body.method,
+        mac: String(mac),
+        success: async (data) => {
+          const linkUrl = new URL(CHECKOUT_ORDER_LINK_URL);
+          const linkResponse = await fetch(linkUrl.toString(), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              order_code: currentOrderCode,
+              checkout_order_id: data.orderId,
+              method: paymentMethod === "cod" ? "COD" : "BANK",
+            }),
+          });
+          const linkData = await linkResponse.json();
+          if (!linkResponse.ok || !linkData.success) {
+            toast.error("Không thể liên kết mã đơn hàng Checkout. Vui lòng liên hệ hỗ trợ.");
+            return;
+          }
+          console.log("Tạo đơn hàng trên Zalo thành công", data);
+          if (paymentMethod === "cod") {
+            finalizeSuccessfulOrder("cod", currentOrderCode);
+          }
+        },
+        fail: (err) => {
+          console.error("Tạo đơn hàng thất bại", err);
+          toast.error("Không thể tạo đơn hàng.");
+        },
+      });
+    } catch (error) {
+      console.error("Failed to create Checkout SDK order:", error);
+      toast.error("Không thể tạo đơn hàng. Vui lòng thử lại.");
+    } finally {
+      setReserving(false);
     }
-
-    const items = cart.map((cartItem) => ({
-      id: String(cartItem.product.id),
-      amount: cartItem.product.price * cartItem.quantity,
-    }));
-
-    const body = {
-      desc: `Thanh toán đơn hàng ${currentOrderCode}`,
-      item: items,
-      amount: totalAmount,
-      method: JSON.stringify({
-        id: paymentMethod === "cod" ? "COD" : "BANK",
-        isCustom: false,
-      })
-    };
-    
-    console.log(body);
-    const mac = await getMac(body);
-    if (!mac) return;
-
-    console.log(`Got mac: ${mac}`);
-    
-    CheckoutSDK.createOrder({
-      desc: body.desc,
-      item: body.item,
-      amount: body.amount,
-      method: body.method, 
-      mac: String(mac),
-      success: (data) => {
-        console.log("Tạo đơn hàng trên Zalo thành công", data);
-        // Lưu ý: SDK sẽ tự mở luồng thanh toán. 
-        // Kết quả sẽ được handle ở sự kiện PaymentDone bên dưới.
-      },
-      fail: (err) => {
-        console.error("Tạo đơn hàng thất bại", err);
-        toast.error("Không thể tạo đơn hàng.");
-      }
-    });
   };
 
   const requestOrderConfirmation = () => {
@@ -396,51 +443,101 @@ export default function Pay() {
     }
   };
 
-  // --- THÊM XỬ LÝ MARESULT TỪ ZALO CHECKOUT SDK ---
-  const handlePaymentDone = useCallback(async (data: any) => {
-    try {
-      // Gọi API checkTransaction của Zalo để xác thực kết quả thanh toán
-      const result = await CheckoutSDK.checkTransaction({ data });
-      
-      // resultCode === 1 nghĩa là thanh toán thành công
-      if (result.resultCode === 1) {
-        const nextOrderNum = orderNum + 1;
-        activeOrderCode = null;
-        setPaying(false);
-        setCart([]);
-        setNote("");
-        setOrderNum(nextOrderNum);
-        refreshOrders();
+  const finalizeSuccessfulOrder = useCallback(
+    (orderState: "cod" | "confirmed", completedOrderCode = orderCode) => {
+      if (
+        completedOrderCode &&
+        finalizedOrderCodeRef.current === completedOrderCode
+      ) {
+        return;
+      }
+      if (completedOrderCode) {
+        finalizedOrderCodeRef.current = completedOrderCode;
+      }
 
-        toast.success(
-          "Xác nhận thanh toán thành công. Cảm ơn bạn đã mua hàng!",
-          { icon: "🎉", duration: 10000 }
-        );
-        navigate("/orders/confirmed", { viewTransition: true });
+      activeOrderCode = null;
+      setCart([]);
+      setNote("");
+      setOrderNum((currentOrderNum) => currentOrderNum + 1);
+      refreshOrders();
+
+      if (orderState === "cod") {
+        toast.success("Đặt hàng thành công. Cảm ơn bạn đã mua hàng!", {
+          icon: "🎉",
+          duration: 3000,
+        });
+        navigate("/orders/cod", { viewTransition: true });
+        
       } else {
-        // Xử lý khi người dùng huỷ thanh toán hoặc lỗi (ví dụ: resultCode === -1)
-        console.log("Thanh toán bị huỷ hoặc thất bại", result);
-        toast.error("Thanh toán chưa hoàn tất.");
+        toast.success("Xác nhận thanh toán thành công. Cảm ơn bạn đã mua hàng!", {
+          icon: "🎉",
+          duration: 10000,
+        });
+        navigate("/orders/confirmed", { viewTransition: true });
+      }
+    },
+    [navigate, orderCode, refreshOrders, setCart, setNote, setOrderNum]
+  );
+
+  const handlePaymentDone = useCallback(async (data: unknown) => {
+    if (
+      typeof data !== "string" &&
+      (typeof data !== "object" || data === null || Array.isArray(data))
+    ) {
+      setCheckingCheckoutPayment(true);
+      toast.error("Không nhận được thông tin giao dịch từ Checkout.");
+      return;
+    }
+
+    try {
+      const result = await CheckoutSDK.checkTransaction({
+        data: data as string | Record<string, string | null | undefined>,
+      });
+
+      switch (result.resultCode) {
+        case 1:
+          if (result.method === "COD") {
+            setPaying(false);
+            setCheckingCheckoutPayment(false);
+            finalizeSuccessfulOrder("cod");
+            break;
+          }
+          setCheckingCheckoutPayment(true);
+          break;
+        case 0:
+          setCheckingCheckoutPayment(true);
+          if (result.resultCode === 0) {
+            // toast("Giao dịch đang được xử lý.");
+          }
+          break;
+        case -1:
+          toast.error("Thanh toán thất bại. Vui lòng thử lại.");
+          break;
+        case -2:
+          toast("Vui lòng chọn phương thức thanh toán.");
+          break;
+        default:
+          console.error("Checkout transaction is invalid:", result);
+          toast.error(result.msg || "Đã xảy ra lỗi, vui lòng thử lại sau.");
+          break;
       }
     } catch (error) {
-      console.error("Lỗi khi kiểm tra giao dịch Checkout SDK:", error);
-      toast.error("Lỗi xác nhận thanh toán.");
+      console.warn("Failed to check Checkout transaction:", error);
+      setCheckingCheckoutPayment(true);
+      toast.error("Không thể kiểm tra giao dịch. Đang chờ hệ thống xác nhận.");
     }
-  }, [orderNum, setCart, setNote, setOrderNum, refreshOrders, navigate]);
+  }, [finalizeSuccessfulOrder]);
 
   useEffect(() => {
-    // Đăng ký lắng nghe sự kiện PaymentDone
     events.on(EventName.PaymentDone, handlePaymentDone);
     return () => {
-      // Hủy lắng nghe khi unmount
       events.off(EventName.PaymentDone, handlePaymentDone);
     };
   }, [handlePaymentDone]);
-  // ------------------------------------------------
 
   // Vẫn giữ cơ chế polling phòng trường hợp dùng ảnh QR code rời (không qua CheckoutSDK)
   useEffect(() => {
-    if (!paying) return;
+    if (!paying && !checkingCheckoutPayment) return;
 
     let cancelled = false;
 
@@ -458,20 +555,9 @@ export default function Pay() {
 
         if (data.success) {
           cancelled = true;
-
-          const nextOrderNum = orderNum + 1;
-          activeOrderCode = null;
           setPaying(false);
-          setCart([]);
-          setNote("");
-          setOrderNum(nextOrderNum);
-          refreshOrders();
-
-          toast.success(
-            "Xác nhận thanh toán thành công. Cảm ơn bạn đã mua hàng!",
-            { icon: "🎉", duration: 10000 }
-          );
-          navigate("/orders/confirmed", { viewTransition: true });
+          setCheckingCheckoutPayment(false);
+          finalizeSuccessfulOrder("confirmed");
         } else {
           const errorCode: string | undefined = data.error_code ?? data.error;
           if (errorCode !== lastErrorCodeRef.current) {
@@ -495,6 +581,7 @@ export default function Pay() {
     };
   }, [
     paying,
+    checkingCheckoutPayment,
     orderCode,
     orderNum,
     setCart,
