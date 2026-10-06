@@ -294,6 +294,8 @@ const allOrdersState = atomWithRefresh(async (get) => {
       const status: OrderStatus =
         order.order_state === "cod" || order.order_state === "pay on delivery"
           ? "cod"
+          : order.order_state === "pending_bank"
+          ? "cod"
           : order.order_state === "waiting for payment"
           ? "waiting for payment"
           : order.order_state === "confirmed"
@@ -302,6 +304,8 @@ const allOrdersState = atomWithRefresh(async (get) => {
       const paymentStatus: PaymentStatus =
         order.order_state === "cod" || order.order_state === "pay on delivery"
           ? "cash on delivery"
+          : order.order_state === "pending_bank"
+          ? "waiting"
           : status === "waiting for payment"
           ? "pending"
           : "success";

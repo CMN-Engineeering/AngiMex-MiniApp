@@ -20,13 +20,13 @@ function OrdersPage() {
       activeKey={activeKey}
       onChange={(nextStatus) => navigate(`/orders/${nextStatus}`)}
     >
-      <Tabs.Tab key="cod" label="Thanh toán khi nhận hàng">
+      <Tabs.Tab key="cod" label="Chờ xác nhận">
         <OrderList ordersState={ordersState("cod")} />
       </Tabs.Tab>
-      <Tabs.Tab key="confirmed" label="Thanh toán thành công">
+      <Tabs.Tab key="confirmed" label="Chờ giao hàng">
         <OrderList ordersState={ordersState("confirmed")} />
       </Tabs.Tab>
-      <Tabs.Tab key="completed" label="Đã hoàn thành">
+      <Tabs.Tab key="completed" label="Giao thành công">
         <OrderList ordersState={ordersState("completed")} />
       </Tabs.Tab>
     </Tabs>

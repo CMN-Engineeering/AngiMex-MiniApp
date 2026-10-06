@@ -191,70 +191,42 @@ async function sendCodOrderNotification(order) {
   );
 }
 
-app.post('/webhooks', (req, res) => {
-  console.log(req.body);
-  const code = String(req.body.code ?? req.body.order_code ?? '').trim();
-  const transferAmount = normalizePaymentAmount(
-    req.body.transferAmount ?? req.body.transfer_amount ?? req.body.amount
-  );
-
-  if (!code || transferAmount === null) {
-    return res.status(400).json({ success: false, error_code: 'invalid_request' });
-  }
-
-  paymentsByCode.set(code, transferAmount);
-  res.json({ success: true });
-});
-
-app.get('/order_confirm', async (req, res) => {
-  const { order_code } = req.query;
-
-  if (!order_code) {
-    return res.json({ success: false, error_code: 'invalid_request' });
-  }
-
-  // 1. Check if payment has been received via webhooks
-  if (!paymentsByCode.has(order_code)) {
-    return res.json({ success: false, error_code: 'order_not_found' });
-  }
-
-  const client = await pool.connect();
+async function confirmBankOrder(orderCode, transferAmount) {
+  let client;
   try {
+    client = await pool.connect();
     await client.query('BEGIN');
     const orderRes = await client.query(
       `SELECT * FROM orders WHERE order_code = $1 FOR UPDATE`,
-      [order_code]
+      [orderCode]
     );
 
     if (orderRes.rowCount === 0) {
       await client.query('ROLLBACK');
-      return res.json({ success: false, error_code: 'order_not_found' });
+      return { success: false, error_code: 'order_not_found' };
     }
 
     const orderInfo = orderRes.rows[0];
     if (orderInfo.order_state === 'confirmed') {
       await client.query('COMMIT');
-      return res.json({ success: true, message: 'Already confirmed' });
+      return { success: true, message: 'Already confirmed' };
     }
-    const expectedAmount = normalizePaymentAmount(orderInfo.amount);
-    const transferAmount = normalizePaymentAmount(paymentsByCode.get(order_code));
+    if (!['pending_bank', 'waiting for payment'].includes(orderInfo.order_state)) {
+      await client.query('ROLLBACK');
+      return { success: false, error_code: 'order_not_available' };
+    }
 
-    // 3. Verify payment amount
+    const expectedAmount = normalizePaymentAmount(orderInfo.amount);
+    const actualTransferAmount = normalizePaymentAmount(transferAmount);
     if (
       expectedAmount === null ||
-      transferAmount === null ||
-      expectedAmount !== transferAmount
+      actualTransferAmount === null ||
+      expectedAmount !== actualTransferAmount
     ) {
-      console.warn('Payment amount mismatch:', {
-        orderCode: order_code,
-        expectedAmount,
-        transferAmount,
-      });
       await client.query('ROLLBACK');
-      return res.json({ success: false, error_code: 'wrong_payment_amount' });
+      return { success: false, error_code: 'wrong_payment_amount' };
     }
 
-    // Legacy pending orders were created before stock reservation was added.
     if (!orderInfo.stock_reserved) {
       await adjustProductStock(client, orderInfo.order_details, 'decrease');
     }
@@ -264,17 +236,16 @@ app.get('/order_confirm', async (req, res) => {
        SET order_state = 'confirmed', stock_reserved = TRUE
        WHERE order_code = $1
        RETURNING *`,
-      [order_code]
+      [orderCode]
     );
     await client.query('COMMIT');
-    await updateZaloOrderStatus(orderInfo.checkout_order_id || order_code, 'bank', 1);
+    await updateZaloOrderStatus(orderInfo.checkout_order_id || orderCode, 'bank', 1);
 
     const order = result.rows[0];
     const orderLines = Object.entries(order.order_details || {})
-      .filter(([, qty]) => Number.isFinite(Number(qty)))
-      .map(([type, qty]) => `- ${escapeHtml(type)}: ${Number(qty)}`)
+      .filter(([, quantity]) => Number.isFinite(Number(quantity)))
+      .map(([name, quantity]) => `- ${escapeHtml(name)}: ${Number(quantity)}`)
       .join('\n');
-
     await sendTelegramMessage(
       [
         '✅ <b>Đơn hàng đã thanh toán</b>',
@@ -290,18 +261,62 @@ app.get('/order_confirm', async (req, res) => {
         .filter(Boolean)
         .join('\n')
     );
-
-    res.json({ success: true });
-  } catch (dbError) {
-    await client.query('ROLLBACK');
-    console.error('Failed to update order state in database:', dbError);
-    if (dbError.code === 'stock_unavailable') {
-      return res.json({ success: false, error_code: 'stock_unavailable' });
+    return { success: true };
+  } catch (error) {
+    if (client) {
+      await client.query('ROLLBACK');
     }
-    return res.json({ success: false, error_code: 'db_error' });
+    console.error('Failed to confirm bank order:', error);
+    return {
+      success: false,
+      error_code: error.code === 'stock_unavailable' ? 'stock_unavailable' : 'db_error',
+    };
   } finally {
-    client.release();
+    if (client) {
+      client.release();
+    }
   }
+}
+
+app.post('/webhooks', async (req, res) => {
+  console.log(req.body);
+  const code = String(req.body.code ?? req.body.order_code ?? '').trim();
+  const transferAmount = normalizePaymentAmount(
+    req.body.transferAmount ?? req.body.transfer_amount ?? req.body.amount
+  );
+
+  if (!code || transferAmount === null) {
+    return res.status(400).json({ success: false, error_code: 'invalid_request' });
+  }
+
+  paymentsByCode.set(code, transferAmount);
+  const result = await confirmBankOrder(code, transferAmount);
+  if (
+    !result.success &&
+    (result.error_code === 'db_error' || result.error_code === 'stock_unavailable')
+  ) {
+    return res.status(500).json({ success: false, error_code: result.error_code });
+  }
+  if (!result.success && result.error_code !== 'order_not_available') {
+    console.warn(`Bank payment webhook was not applied to ${code}:`, result.error_code);
+  }
+  res.json({ success: true });
+});
+
+app.get('/order_confirm', async (req, res) => {
+  const { order_code } = req.query;
+
+  if (!order_code) {
+    return res.json({ success: false, error_code: 'invalid_request' });
+  }
+
+  const transferAmount = paymentsByCode.get(String(order_code));
+  if (transferAmount === undefined) {
+    return res.json({ success: false, error_code: 'order_not_found' });
+  }
+
+  const result = await confirmBankOrder(String(order_code), transferAmount);
+  res.json(result);
 });
 // Add New Product endpoint
 app.get('/add_product', async (req, res) => {
@@ -406,14 +421,18 @@ app.get('/order_cod', async (req, res) => {
     });
     res.json({ success: true, order_code: targetOrderCode });
   } catch (dbError) {
-    await client.query('ROLLBACK');
+    if (client) {
+      await client.query('ROLLBACK');
+    }
     console.error('Failed to save COD order to database:', dbError);
     if (dbError.code === 'stock_unavailable') {
       return res.status(409).json({ success: false, error_code: 'stock_unavailable' });
     }
     res.status(500).json({ success: false, error_code: 'db_error' });
   } finally {
-    client.release();
+    if (client) {
+      client.release();
+    }
   }
 });
 app.get('/order_paying', async (req, res) => {
@@ -706,31 +725,228 @@ app.post('/checkout_order_link', async (req, res) => {
          SELECT order_code, order_state
          FROM orders
          WHERE order_code = $1
-           AND order_state IN ('reserved', 'waiting for payment', 'cod')
+           AND order_state IN ('reserved', 'waiting for payment', 'pending_bank', 'cod')
            AND (checkout_order_id IS NULL OR checkout_order_id = $2)
          FOR UPDATE
        ), updated AS (
          UPDATE orders AS order_row
-         SET checkout_order_id = $2,
-             order_state = CASE WHEN $3 = 'COD' THEN 'cod' ELSE order_row.order_state END
+         SET checkout_order_id = $2
          FROM target
          WHERE order_row.order_code = target.order_code
-         RETURNING order_row.*, target.order_state AS previous_order_state
+         RETURNING order_row.*
        )
        SELECT * FROM updated`,
-      [String(order_code), String(checkout_order_id), method ?? null]
+      [String(order_code), String(checkout_order_id)]
     );
     if (result.rowCount === 0) {
       return res.status(409).json({ success: false, error: 'order_not_available' });
-    }
-    const linkedOrder = result.rows[0];
-    if (method === 'COD' && linkedOrder.previous_order_state !== 'cod') {
-      await sendCodOrderNotification(linkedOrder);
     }
     res.json({ success: true });
   } catch (error) {
     console.error('Failed to link Checkout order:', error);
     res.status(500).json({ success: false, error: 'database_error' });
+  }
+});
+app.post('/order_cod', async (req, res) => {
+  const {
+    order_code,
+    checkout_order_id,
+    amount,
+    shipping_address,
+    receiver_name,
+    phone_number,
+    note,
+    user_id,
+    order,
+  } = req.body || {};
+  const numericAmount = Number(amount);
+
+  if (
+    !order_code ||
+    !checkout_order_id ||
+    !user_id ||
+    !Number.isFinite(numericAmount) ||
+    numericAmount <= 0 ||
+    !shipping_address ||
+    !receiver_name ||
+    !phone_number ||
+    !order ||
+    typeof order !== 'object' ||
+    Array.isArray(order) ||
+    Object.keys(order).length === 0
+  ) {
+    return res.status(400).json({ success: false, error_code: 'invalid_request' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const existingOrder = await client.query(
+      `SELECT * FROM orders WHERE order_code = $1 FOR UPDATE`,
+      [String(order_code)]
+    );
+    if (
+      existingOrder.rowCount === 0 ||
+      existingOrder.rows[0].user_id !== String(user_id) ||
+      existingOrder.rows[0].checkout_order_id !== String(checkout_order_id)
+    ) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ success: false, error_code: 'order_not_available' });
+    }
+
+    const currentOrder = existingOrder.rows[0];
+    if (
+      currentOrder.order_state === 'cod' &&
+      currentOrder.order_details &&
+      Object.keys(currentOrder.order_details).length > 0
+    ) {
+      await client.query('COMMIT');
+      return res.json({ success: true, order_code: String(order_code) });
+    }
+    if (!['reserved', 'cod'].includes(currentOrder.order_state)) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ success: false, error_code: 'order_not_available' });
+    }
+
+    if (!currentOrder.stock_reserved) {
+      await adjustProductStock(client, order, 'decrease');
+    }
+    await client.query(
+      `UPDATE orders
+       SET order_state = 'cod', amount = $3, shipping_address = $4,
+           receiver_name = $5, phone_number = $6, note = $7,
+           order_details = $8, stock_reserved = TRUE
+       WHERE order_code = $1 AND user_id = $2`,
+      [
+        String(order_code),
+        String(user_id),
+        numericAmount,
+        String(shipping_address).slice(0, 500),
+        String(receiver_name).slice(0, 255),
+        String(phone_number).slice(0, 50),
+        String(note ?? '').slice(0, 100),
+        order,
+      ]
+    );
+
+    await client.query('COMMIT');
+    await sendCodOrderNotification({
+      order_code: String(order_code),
+      user_id: String(user_id),
+      amount: numericAmount,
+      receiver_name,
+      phone_number,
+      note,
+      shipping_address,
+      order_details: order,
+    });
+    res.json({ success: true, order_code: String(order_code) });
+  } catch (dbError) {
+    await client.query('ROLLBACK');
+    console.error('Failed to save COD order to database:', dbError);
+    if (dbError.code === 'stock_unavailable') {
+      return res.status(409).json({ success: false, error_code: 'stock_unavailable' });
+    }
+    res.status(500).json({ success: false, error_code: 'db_error' });
+  } finally {
+    client.release();
+  }
+});
+app.post('/order_pending_bank', async (req, res) => {
+  const {
+    order_code,
+    amount,
+    shipping_address,
+    receiver_name,
+    phone_number,
+    note,
+    user_id,
+    order,
+  } = req.body || {};
+  const numericAmount = Number(amount);
+
+  if (
+    !order_code ||
+    !user_id ||
+    !Number.isFinite(numericAmount) ||
+    numericAmount <= 0 ||
+    !shipping_address ||
+    !receiver_name ||
+    !phone_number ||
+    !order ||
+    typeof order !== 'object' ||
+    Array.isArray(order) ||
+    Object.keys(order).length === 0
+  ) {
+    return res.status(400).json({ success: false, error_code: 'invalid_request' });
+  }
+
+  let client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const existingOrder = await client.query(
+      `SELECT order_state, user_id
+       FROM orders WHERE order_code = $1 FOR UPDATE`,
+      [String(order_code)]
+    );
+
+    if (
+      existingOrder.rowCount === 0 ||
+      existingOrder.rows[0].user_id !== String(user_id)
+    ) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ success: false, error_code: 'order_not_available' });
+    }
+
+    if (existingOrder.rows[0].order_state === 'pending_bank') {
+      await client.query('COMMIT');
+      return res.json({ success: true, order_code: String(order_code) });
+    }
+    if (existingOrder.rows[0].order_state !== 'reserved') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ success: false, error_code: 'order_not_available' });
+    }
+
+    await adjustProductStock(client, order, 'decrease');
+    await client.query(
+      `UPDATE orders
+       SET order_state = 'pending_bank', amount = $3, shipping_address = $4,
+           receiver_name = $5, phone_number = $6, note = $7,
+           order_details = $8, stock_reserved = TRUE
+       WHERE order_code = $1 AND user_id = $2`,
+      [
+        String(order_code),
+        String(user_id),
+        numericAmount,
+        String(shipping_address).slice(0, 500),
+        String(receiver_name).slice(0, 255),
+        String(phone_number).slice(0, 50),
+        String(note ?? '').slice(0, 100),
+        order,
+      ]
+    );
+
+    await client.query('COMMIT');
+    client.release();
+    client = null;
+    const transferAmount = paymentsByCode.get(String(order_code));
+    if (transferAmount !== undefined) {
+      await confirmBankOrder(String(order_code), transferAmount);
+    }
+    res.json({ success: true, order_code: String(order_code) });
+  } catch (dbError) {
+    if (client) {
+      await client.query('ROLLBACK');
+    }
+    console.error('Failed to save pending bank order:', dbError);
+    if (dbError.code === 'stock_unavailable') {
+      return res.status(409).json({ success: false, error_code: 'stock_unavailable' });
+    }
+    res.status(500).json({ success: false, error_code: 'db_error' });
+  } finally {
+    if (client) {
+      client.release();
+    }
   }
 });
 // --- Zalo Checkout SDK Webhook: COD ---
@@ -753,33 +969,15 @@ app.post('/cod', async (req, res) => {
       return res.json({ returnCode: 0, returnMessage: 'Mac validation failed' });
     }
 
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const orderRes = await client.query(
-        `SELECT * FROM orders WHERE checkout_order_id = $1 FOR UPDATE`,
-        [orderId]
-      );
-
-      if (orderRes.rowCount === 0) {
-        await client.query('ROLLBACK');
-        return res.json({ returnCode: 0, returnMessage: 'Order not found' });
-      }
-      await client.query(
-        `UPDATE orders SET order_state = 'cod' WHERE order_code = $1`,
-        [orderRes.rows[0].order_code]
-      );
-      await client.query('COMMIT');
-      if (orderRes.rows[0].order_state !== 'cod') {
-        await sendCodOrderNotification(orderRes.rows[0]);
-      }
-    } catch (dbError) {
-      await client.query('ROLLBACK');
-      throw dbError;
-    } finally {
-      client.release();
+    const orderRes = await pool.query(
+      `SELECT order_code FROM orders WHERE checkout_order_id = $1`,
+      [String(orderId)]
+    );
+    if (orderRes.rowCount === 0) {
+      return res.json({ returnCode: 0, returnMessage: 'Order not found' });
     }
 
+    // Persist COD only after the client confirms the Checkout transaction.
     // 4. Return exact success payload required by Zalo
     return res.json({ returnCode: 1, returnMessage: 'success' });
   } catch (error) {
@@ -821,7 +1019,12 @@ app.post('/bank', async (req, res) => {
         return res.json({ returnCode: 0, returnMessage: 'Order not found' });
       }
       await client.query(
-        `UPDATE orders SET order_state = 'waiting for payment' WHERE order_code = $1`,
+        `UPDATE orders
+         SET order_state = CASE
+           WHEN order_state = 'reserved' THEN 'pending_bank'
+           ELSE order_state
+         END
+         WHERE order_code = $1`,
         [orderRes.rows[0].order_code]
       );
       await client.query('COMMIT');
@@ -897,10 +1100,10 @@ app.get('/delete_order', async (req, res) => {
     // Build query depending on whether user_id is passed (admin vs client)
     const selectQuery = user_id
       ? `SELECT * FROM orders
-         WHERE order_code = $1 AND user_id = $2 AND order_state IN ('waiting for payment', 'cod')
+         WHERE order_code = $1 AND user_id = $2 AND order_state IN ('waiting for payment', 'pending_bank', 'cod')
          FOR UPDATE`
       : `SELECT * FROM orders
-         WHERE order_code = $1 AND order_state IN ('waiting for payment', 'cod')
+         WHERE order_code = $1 AND order_state IN ('waiting for payment', 'pending_bank', 'cod')
          FOR UPDATE`;
     
     const params = user_id ? [String(order_code), String(user_id)] : [String(order_code)];
@@ -918,9 +1121,9 @@ app.get('/delete_order', async (req, res) => {
 
     const deleteQuery = user_id
       ? `DELETE FROM orders
-         WHERE order_code = $1 AND user_id = $2 AND order_state IN ('waiting for payment', 'cod')`
+         WHERE order_code = $1 AND user_id = $2 AND order_state IN ('waiting for payment', 'pending_bank', 'cod')`
       : `DELETE FROM orders
-         WHERE order_code = $1 AND order_state IN ('waiting for payment', 'cod')`;
+         WHERE order_code = $1 AND order_state IN ('waiting for payment', 'pending_bank', 'cod')`;
 
     await client.query(deleteQuery, params);
     await client.query('COMMIT');
@@ -999,8 +1202,8 @@ async function cleanupExpiredPendingOrders() {
     const expiredOrdersResult = await client.query(`
       SELECT order_code, order_details, stock_reserved
       FROM orders
-      WHERE order_state = 'waiting for payment'
-        AND created_at < NOW() - INTERVAL '30 SECONDS'
+      WHERE order_state IN ('waiting for payment', 'pending_bank')
+        AND created_at < NOW() - INTERVAL '24 HOURS'
       FOR UPDATE
     `);
 

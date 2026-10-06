@@ -60,7 +60,8 @@ function OrderSummary(props: {
           </span> */}
           <span style={{marginLeft:'auto'}}
             className={`text-xs ${
-              props.order.paymentStatus === "pending"
+              props.order.paymentStatus === "pending" ||
+              props.order.paymentStatus === "waiting"
                 ? "text-danger"
                 : "text-primary"
             }`}
@@ -68,6 +69,7 @@ function OrderSummary(props: {
             {props.order.paymentStatus === "cash on delivery"
               ? "Thanh toán khi nhận hàng"
               : {
+                  waiting: "Chờ thanh toán",
                   pending: `Cần thanh toán trước ngày ${tomorrow.getDate()}/${tomorrow.getMonth()}/${tomorrow.getFullYear()}`,
                   success: "Đã thanh toán",
                   failed: "Thanh toán thất bại",

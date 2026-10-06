@@ -69,7 +69,12 @@ export type Delivery =
     };
 
 export type OrderStatus = "waiting for payment" | "cod" | "confirmed" | "completed";
-export type PaymentStatus = "pending" | "cash on delivery" | "success" | "failed";
+export type PaymentStatus =
+  | "pending"
+  | "waiting"
+  | "cash on delivery"
+  | "success"
+  | "failed";
 
 export interface Order {
   id: number | string;
