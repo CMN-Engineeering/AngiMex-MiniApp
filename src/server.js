@@ -47,6 +47,27 @@ app.use((req, res, next) => {
   next();
 });
 
+app.get('/get_app_health', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT is_healthy, updated_at
+       FROM app_health
+       ORDER BY updated_at DESC
+       LIMIT 1`
+    );
+    const latestHealth = result.rows[0];
+
+    res.json({
+      success: true,
+      isHealthy: latestHealth?.is_healthy === true,
+      updatedAt: latestHealth?.updated_at ?? null,
+    });
+  } catch (error) {
+    console.error('Error fetching app health:', error);
+    res.status(500).json({ success: false, error_code: 'db_error' });
+  }
+});
+
 const paymentsByCode = new Map();
 
 const TELEGRAM_BOT_TOKEN = "8860000011:AAGQVstc7vHo734tIQ35Ipb0Fa1hxGybEbc";
