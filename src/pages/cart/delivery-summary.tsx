@@ -22,7 +22,7 @@ function DeliverySummary(props: {
             style={{
               fontWeight:'500',
               fontSize:'13px',
-              color:'green'
+              color: "var(--primary)",
             }}
           >
             Thay đổi

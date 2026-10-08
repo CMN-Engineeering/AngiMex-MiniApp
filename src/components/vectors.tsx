@@ -482,8 +482,8 @@ export function SearchIconLarge() {
           y2="65.3125"
           gradientUnits="userSpaceOnUse"
         >
-          <stop stopColor="#52B361" />
-          <stop offset="1" stopColor="#52B361" stopOpacity="0" />
+          <stop stopColor="#235D2F" />
+          <stop offset="1" stopColor="#235D2F" stopOpacity="0" />
         </linearGradient>
         <linearGradient
           id="paint1_linear_2208_10921"
@@ -493,8 +493,8 @@ export function SearchIconLarge() {
           y2="19.2859"
           gradientUnits="userSpaceOnUse"
         >
-          <stop stopColor="#52B361" />
-          <stop offset="1" stopColor="#9AE1A5" />
+          <stop stopColor="#235D2F" />
+          <stop offset="1" stopColor="#235D2F" />
         </linearGradient>
         <linearGradient
           id="paint2_linear_2208_10921"
@@ -647,19 +647,19 @@ export function ShipperIcon() {
         fillRule="evenodd"
         clipRule="evenodd"
         d="M4.21443 6.83887V4.59454H2.43384V6.83887C2.43384 7.01559 2.55548 7.15968 2.70463 7.15968H3.94373C4.09284 7.15973 4.21443 7.01559 4.21443 6.83887Z"
-        fill="#52B361"
+        fill="#235D2F"
       />
       <path
         fillRule="evenodd"
         clipRule="evenodd"
         d="M17.0479 10.8237H19.5018L20.6695 16.2223H17.0479V10.8237Z"
-        fill="#52B361"
+        fill="#235D2F"
       />
       <path
         fillRule="evenodd"
         clipRule="evenodd"
         d="M17.0479 10.8237H19.5018L19.9741 13.0074L17.0479 11.9026V10.8237Z"
-        fill="#3A7D44"
+        fill="#184522"
       />
       <path
         fillRule="evenodd"
@@ -695,19 +695,19 @@ export function ShipperIcon() {
         fillRule="evenodd"
         clipRule="evenodd"
         d="M1.41406 18.8218H11.4327V12.0929H4.77852C2.92808 12.0929 1.41406 13.6069 1.41406 15.4573V18.8218Z"
-        fill="#52B361"
+        fill="#235D2F"
       />
       <path
         fillRule="evenodd"
         clipRule="evenodd"
         d="M10.5798 16.344H16.5098V18.8218H10.5798V16.344Z"
-        fill="#52B361"
+        fill="#235D2F"
       />
       <path
         fillRule="evenodd"
         clipRule="evenodd"
         d="M20.1021 8.09331L17.5081 8.48706C17.2415 8.52751 17.0479 8.75279 17.0479 9.02246V11.1655L20.1021 11.6291C20.9102 11.7518 21.5832 10.8336 21.5832 9.86124C21.5832 8.93345 20.9335 7.96716 20.1021 8.09331Z"
-        fill="#52B361"
+        fill="#235D2F"
       />
       <path
         fillRule="evenodd"
@@ -797,13 +797,13 @@ export function ShipperIcon() {
         fillRule="evenodd"
         clipRule="evenodd"
         d="M15.3074 1.62997C16.4961 1.74556 17.4187 2.64711 17.611 3.77004C17.6404 3.94198 17.5926 4.10243 17.4738 4.23022C17.355 4.358 17.1984 4.41734 17.0248 4.40047L15.5956 4.26148C15.2987 4.23261 15.033 4.45118 15.0041 4.74804L14.8652 6.17698C14.8483 6.3507 14.7598 6.49301 14.6115 6.58498C14.4632 6.67695 14.2963 6.69298 14.1332 6.63092C13.0685 6.22568 12.3619 5.14676 12.4774 3.95825C12.616 2.5339 13.883 1.49145 15.3074 1.62997Z"
-        fill="#52B361"
+        fill="#235D2F"
       />
       <path
         fillRule="evenodd"
         clipRule="evenodd"
         d="M15.3076 1.62996C16.4963 1.74556 17.4189 2.6471 17.6112 3.77004C17.6407 3.94198 17.5928 4.10243 17.474 4.23021C17.3706 4.34149 17.2384 4.40089 17.0913 4.40318C17.0914 4.39123 17.0917 4.37928 17.0917 4.36728C17.0917 2.96928 15.9585 1.83603 14.5605 1.83603C14.281 1.83603 14.0121 1.88145 13.7607 1.96507C14.2129 1.70346 14.7481 1.57554 15.3076 1.62996Z"
-        fill="#3A7D44"
+        fill="#184522"
       />
     </svg>
   );
@@ -907,7 +907,7 @@ export function PackageDeliveryIcon() {
         />
         <path
           d="M10.625 1.73438H7.625V5.09894C7.625 5.35419 7.87128 5.54773 8.11865 5.46515L9.125 5.1297L10.1313 5.46515C10.3791 5.54773 10.625 5.354 10.625 5.09894V1.73438Z"
-          fill="#52B361"
+          fill="#235D2F"
         />
         <path
           d="M9.125 6.60938H4.625C4.41791 6.60938 4.25 6.77728 4.25 6.98438V8.48438C4.25 8.69147 4.41791 8.85938 4.625 8.85938H9.125C9.33209 8.85938 9.5 8.69147 9.5 8.48438V6.98438C9.5 6.77728 9.33209 6.60938 9.125 6.60938Z"
@@ -947,11 +947,11 @@ export function PackageDeliveryIcon() {
         />
         <path
           d="M5 11.1094H0.5V15.6094H5C5.20709 15.6094 5.375 15.4415 5.375 15.2344V11.4844C5.375 11.2773 5.20709 11.1094 5 11.1094Z"
-          fill="#52B361"
+          fill="#235D2F"
         />
         <path
           d="M5 14.8594H0.5V15.6094H5C5.20709 15.6094 5.375 15.4415 5.375 15.2344V14.4844C5.375 14.6915 5.20709 14.8594 5 14.8594Z"
-          fill="#3A7D44"
+          fill="#184522"
         />
       </g>
       <defs>

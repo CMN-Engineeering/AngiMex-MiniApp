@@ -38,6 +38,7 @@ export default function Header() {
       className="w-full flex flex-col px-4 bg-primary text-primaryForeground pt-st overflow-hidden bg-no-repeat bg-right-top"
       style={{
         backgroundImage: `url(${headerIllus})`,
+        paddingTop:"30px",
       }}
     >
       <div className="w-full min-h-12 pr-[90px] flex py-2 space-x-2 items-center">
@@ -46,7 +47,16 @@ export default function Header() {
             <img
               src={getConfig((c) => c.template.logoUrl)}
               // className="flex-none w-8 h-8 rounded-full"
-              style={{width : "50px"}}
+              style={{
+                backgroundColor:"white",
+                borderRadius:"10px",
+                padding:"6px",
+                width : "57px",
+                height:"45px",
+                objectFit:"cover",
+                objectPosition:"top"
+                // borderRadius:"100px",
+              }}
             />
             <TransitionLink to="/stations" className="flex-1 overflow-hidden">
               <div className="flex items-center space-x-1">

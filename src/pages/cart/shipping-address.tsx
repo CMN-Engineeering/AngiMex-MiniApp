@@ -274,8 +274,10 @@ function ShippingAddressPage() {
       onSubmit={async (e) => {
         e.preventDefault();
 
-        if (!provinceCode || !wardCode) {
-          toast.error("Vui lòng chọn đầy đủ tỉnh/thành và xã/phường");
+        if (!provinceCode || !wardCode || !detail.trim()) {
+          toast.error(
+            "Vui lòng chọn tỉnh/thành, xã/phường và nhập số nhà, tên đường"
+          );
           return;
         }
 
@@ -365,6 +367,7 @@ function ShippingAddressPage() {
             label="Địa chỉ chi tiết"
             placeholder="Số nhà, tên đường..."
             value={detail}
+            required
             onChange={(e) => setDetail(e.target.value)}
           />
         </div>

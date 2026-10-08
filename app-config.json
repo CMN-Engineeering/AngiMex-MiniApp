@@ -2,7 +2,7 @@
   "app": {
     "title": "angimex_miniapp",
     "textColor": "white",
-    "headerColor": "#ffffff",
+    "headerColor": "#235d2f",
     "statusBar": "transparent",
     "actionBarHidden": true,
     "hideAndroidBottomNavigationBar": false,
@@ -16,7 +16,7 @@
     "name": "zaui-market",
     "apiUrl": "",
     "oaIDtoOpenChat": "4318657068771012646",
-    "logoUrl": "https://angimexfood.com/uploads/qcs/logo-png-202107151954519r1TR9H8PN.png",
+    "logoUrl": "https://angimex.com.vn/uploads/qcs/angimex-removebg-preview-png-20210623174844OPCB8TN7ag.png",
     "shopName": "AngiMex Food",
     "shopAddress": ""
   }

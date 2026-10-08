@@ -7,6 +7,9 @@ import DeliverySummary from "../cart/delivery-summary";
 function OrderInfo(props: { order: Order; editable?: boolean }) {
   return (
     <List noSpacing className="bg-section rounded-lg">
+      <List.Item prefix={<Icon icon="zi-note" />} title="Mã đơn hàng">
+        <span className="text-xs text-inactive">{props.order.id}</span>
+      </List.Item>
       {props.order.delivery.type === "pickup" ? (
         <DeliverySummary
           icon={<HomeIcon />}

@@ -251,12 +251,14 @@ export default function Pay() {
     if (reserving || paying) return;
     if (
       !cart.length ||
+      !Number.isFinite(totalAmount) ||
+      totalAmount <= 0 ||
       !receiverName.trim() ||
       !/^0\d{9}$/.test(phoneNumber.trim()) ||
       !shippingAddressText.trim()
     ) {
       toast.error(
-        "Vui lòng kiểm tra tên, số điện thoại và địa chỉ giao hàng trước khi gửi.",
+        "Vui lòng kiểm tra sản phẩm, tổng tiền, tên, số điện thoại và địa chỉ giao hàng trước khi gửi.",
         { duration: 5000 }
       );
       return;
@@ -361,7 +363,7 @@ export default function Pay() {
             setNote("");
             setOrderNum((currentOrderNum) => currentOrderNum + 1);
             refreshOrders();
-            navigate("/orders/cod", { viewTransition: true });
+            navigate("/orders/waiting for payment", { viewTransition: true });
             return;
           }
           setCheckingCheckoutPayment(true);
@@ -380,7 +382,7 @@ export default function Pay() {
   };
 
   const requestOrderConfirmation = () => {
-    if (paying || reserving) return;
+    if (paying || reserving || checkingCheckoutPayment) return;
     setConfirmingOrder(true);
   };
 
@@ -472,7 +474,7 @@ export default function Pay() {
       typeof data !== "string" &&
       (typeof data !== "object" || data === null || Array.isArray(data))
     ) {
-      setCheckingCheckoutPayment(true);
+      setCheckingCheckoutPayment(false);
       // toast.error("Không nhận được thông tin giao dịch từ Checkout.");
       return;
     }
@@ -533,19 +535,21 @@ export default function Pay() {
           }
           break;
         case -1:
+          setCheckingCheckoutPayment(false);
           // toast.error("Thanh toán thất bại. Vui lòng thử lại.");
           break;
         case -2:
-          toast("Vui lòng chọn phương thức thanh toán.");
+          setCheckingCheckoutPayment(false);
           break;
         default:
+          setCheckingCheckoutPayment(false);
           console.error("Checkout transaction is invalid:", result);
           // toast.error(result.msg || "Đã xảy ra lỗi, vui lòng thử lại sau.");
           break;
       }
     } catch (error) {
       console.warn("Failed to check Checkout transaction:", error);
-      setCheckingCheckoutPayment(true);
+      setCheckingCheckoutPayment(false);
       // toast.error("Không thể kiểm tra giao dịch. Đang chờ hệ thống xác nhận.");
     }
   }, [
@@ -629,7 +633,7 @@ export default function Pay() {
           style={{
             marginLeft: "auto",
             fontWeight: "650",
-            color: "green",
+            color: "#235d2f",
           }}
         >
           {formatPrice(totalAmount)}
@@ -649,7 +653,7 @@ export default function Pay() {
       <div className="px-4 py-3">
         <Button
           className="w-full"
-          onClick={createOrder}
+          onClick={requestOrderConfirmation}
           disabled={paying || reserving || checkingCheckoutPayment}
         >
           Xác nhận đặt hàng
@@ -723,7 +727,7 @@ export default function Pay() {
         onClose={() => setConfirmingOrder(false)}
         actions={[
           {
-            text: "Hủy",
+            text: "Quay lại",
             close: true,
             onClick: () => setConfirmingOrder(false),
           },

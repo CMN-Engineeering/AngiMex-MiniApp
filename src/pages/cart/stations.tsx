@@ -18,7 +18,10 @@ function Station({
       className="flex items-center space-x-4 p-4 pr-2 bg-section rounded-lg text-left"
       onClick={onSelect}
     >
-      <img src={station.image} className="h-14 w-14 rounded-lg bg-skeleton" />
+      <img src={station.image}
+      style={{
+        width:"17%"
+      }} />
       <div className="flex-1 space-y-0.5">
         <div className="text-sm">{station.name}</div>
         <div className="text-xs text-inactive">{station.address}</div>

@@ -546,7 +546,9 @@ app.get('/get_orders_by_user_id', async (req, res) => {
       ? legacyDemoUserIds
       : [String(user_id)];
     const result = await pool.query(
-      'SELECT * FROM orders WHERE user_id = ANY($1::text[]) ORDER BY created_at DESC',
+      `SELECT * FROM orders
+       WHERE user_id = ANY($1::text[]) AND order_state <> 'reserved'
+       ORDER BY created_at DESC`,
       [userIds]
     );
     res.json({ success: true, orders: result.rows });
@@ -726,7 +728,10 @@ app.post('/checkout_order_link', async (req, res) => {
          FROM orders
          WHERE order_code = $1
            AND order_state IN ('reserved', 'waiting for payment', 'pending_bank', 'cod')
-           AND (checkout_order_id IS NULL OR checkout_order_id = $2)
+           AND (
+             checkout_order_id IS NULL OR checkout_order_id = $2
+             OR order_state IN ('waiting for payment', 'pending_bank')
+           )
          FOR UPDATE
        ), updated AS (
          UPDATE orders AS order_row
@@ -745,6 +750,79 @@ app.post('/checkout_order_link', async (req, res) => {
   } catch (error) {
     console.error('Failed to link Checkout order:', error);
     res.status(500).json({ success: false, error: 'database_error' });
+  }
+});
+app.post('/confirm_checkout_payment', async (req, res) => {
+  const { order_code, checkout_order_id, user_id } = req.body || {};
+  if (!order_code || !checkout_order_id || !user_id) {
+    return res.status(400).json({ success: false, error_code: 'invalid_request' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const orderResult = await client.query(
+      `SELECT * FROM orders
+       WHERE order_code = $1 AND checkout_order_id = $2 AND user_id = $3
+       FOR UPDATE`,
+      [String(order_code), String(checkout_order_id), String(user_id)]
+    );
+    if (orderResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ success: false, error_code: 'order_not_available' });
+    }
+
+    const orderInfo = orderResult.rows[0];
+    if (orderInfo.order_state === 'confirmed') {
+      await client.query('COMMIT');
+      return res.json({ success: true, order_code: String(order_code) });
+    }
+    if (!['pending_bank', 'waiting for payment'].includes(orderInfo.order_state)) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ success: false, error_code: 'order_not_pending' });
+    }
+
+    if (!orderInfo.stock_reserved) {
+      await adjustProductStock(client, orderInfo.order_details, 'decrease');
+    }
+    await client.query(
+      `UPDATE orders
+       SET order_state = 'confirmed', stock_reserved = TRUE
+       WHERE order_code = $1`,
+      [String(order_code)]
+    );
+    await client.query('COMMIT');
+
+    await updateZaloOrderStatus(String(checkout_order_id), 'bank', 1);
+    const orderLines = Object.entries(orderInfo.order_details || {})
+      .filter(([, quantity]) => Number.isFinite(Number(quantity)))
+      .map(([name, quantity]) => `- ${escapeHtml(name)}: ${Number(quantity)}`)
+      .join('\n');
+    await sendTelegramMessage(
+      [
+        '✅ <b>Đơn hàng đã thanh toán</b>',
+        `Mã đơn: <code>${escapeHtml(orderInfo.order_code)}</code>`,
+        `User ID: <code>${escapeHtml(orderInfo.user_id)}</code>`,
+        `Số tiền: ${Number(orderInfo.amount).toLocaleString('vi-VN')}đ`,
+        orderInfo.receiver_name ? `Tên người nhận hàng: ${escapeHtml(orderInfo.receiver_name)}` : null,
+        orderInfo.phone_number ? `SĐT: ${escapeHtml(orderInfo.phone_number)}` : null,
+        orderInfo.note ? `Ghi chú: ${escapeHtml(orderInfo.note)}` : null,
+        orderInfo.shipping_address ? `Địa chỉ: ${escapeHtml(orderInfo.shipping_address)}` : null,
+        orderLines ? `Chi tiết đơn hàng:\n${orderLines}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n')
+    );
+    res.json({ success: true, order_code: String(order_code) });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Failed to confirm Checkout payment:', error);
+    if (error.code === 'stock_unavailable') {
+      return res.status(409).json({ success: false, error_code: 'stock_unavailable' });
+    }
+    res.status(500).json({ success: false, error_code: 'db_error' });
+  } finally {
+    client.release();
   }
 });
 app.post('/order_cod', async (req, res) => {
@@ -1202,7 +1280,7 @@ async function cleanupExpiredPendingOrders() {
     const expiredOrdersResult = await client.query(`
       SELECT order_code, order_details, stock_reserved
       FROM orders
-      WHERE order_state IN ('waiting for payment', 'pending_bank')
+      WHERE order_state IN ('reserved', 'waiting for payment', 'pending_bank')
         AND created_at < NOW() - INTERVAL '24 HOURS'
       FOR UPDATE
     `);

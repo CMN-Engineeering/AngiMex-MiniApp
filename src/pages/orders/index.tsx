@@ -20,6 +20,9 @@ function OrdersPage() {
       activeKey={activeKey}
       onChange={(nextStatus) => navigate(`/orders/${nextStatus}`)}
     >
+      <Tabs.Tab key="waiting for payment" label="Chờ thanh toán">
+        <OrderList ordersState={ordersState("waiting for payment")} />
+      </Tabs.Tab>
       <Tabs.Tab key="cod" label="Chờ xác nhận">
         <OrderList ordersState={ordersState("cod")} />
       </Tabs.Tab>

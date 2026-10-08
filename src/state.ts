@@ -8,6 +8,7 @@ import {
 } from "jotai/utils";
 import {
   Cart,
+  CartItem,
   Category,
   Delivery,
   Location,
@@ -295,7 +296,7 @@ const allOrdersState = atomWithRefresh(async (get) => {
         order.order_state === "cod" || order.order_state === "pay on delivery"
           ? "cod"
           : order.order_state === "pending_bank"
-          ? "cod"
+          ? "waiting for payment"
           : order.order_state === "waiting for payment"
           ? "waiting for payment"
           : order.order_state === "confirmed"
@@ -320,7 +321,10 @@ const allOrdersState = atomWithRefresh(async (get) => {
             product: products.find((product) => product.name === name),
             quantity: Number(quantity),
           }))
-          .filter((item) => item.product && item.quantity > 0),
+          .filter(
+            (item): item is CartItem =>
+              item.product !== undefined && item.quantity > 0
+          ),
         delivery: {
           type: order.delivery_type === "pickup" ? "pickup" : "shipping",
           ...(order.delivery_type === "pickup"
