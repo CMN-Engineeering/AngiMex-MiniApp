@@ -1,11 +1,40 @@
 import { useAtomValue } from "jotai";
-import { cartTotalState } from "@/state";
+import { loadable } from "jotai/utils";
+import { useMemo } from "react";
+import {
+  cartTotalState,
+  deliveryModeState,
+  selectedStationState,
+  shippingAddressState,
+} from "@/state";
 import { formatPrice } from "@/utils/format";
+import { calculateDistance } from "@/utils/location";
+import { calculateShippingFee } from "@/utils/shipping";
 import Section from "@/components/section";
 import HorizontalDivider from "@/components/horizontal-divider";
 
 export default function CartSummary() {
   const { totalAmount } = useAtomValue(cartTotalState);
+  const deliveryMode = useAtomValue(deliveryModeState);
+  const shippingAddress = useAtomValue(shippingAddressState);
+  const selectedStation = useAtomValue(
+    useMemo(() => loadable(selectedStationState), [])
+  );
+  const shippingFee =
+    deliveryMode === "pickup"
+      ? 0
+      : shippingAddress?.location &&
+        selectedStation.state === "hasData" &&
+        selectedStation.data
+      ? calculateShippingFee(
+          calculateDistance(
+            selectedStation.data.location.lat,
+            selectedStation.data.location.lng,
+            shippingAddress.location.lat,
+            shippingAddress.location.lng
+          )
+        )
+      : null;
 
   return (
     <Section title="Thanh toán" className="rounded-lg">
@@ -18,14 +47,22 @@ export default function CartSummary() {
             </tr>
             <tr>
               <th>Phí vận chuyển</th>
-              <td>0 VND</td>
+              <td>
+                {shippingFee === null
+                  ? "Nhập địa chỉ để tính"
+                  : formatPrice(shippingFee)}
+              </td>
             </tr>
           </tbody>
         </table>
         <HorizontalDivider />
         <div className="flex justify-between font-medium text-sm">
           <div>Tổng thanh toán</div>
-          <div>{formatPrice(totalAmount)}</div>
+          <div>
+            {shippingFee === null
+              ? "—"
+              : formatPrice(totalAmount + shippingFee)}
+          </div>
         </div>
       </div>
     </Section>

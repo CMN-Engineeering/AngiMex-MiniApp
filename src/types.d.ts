@@ -47,6 +47,7 @@ export interface ShippingAddress {
   detail: string;
   name: string;
   phone: string;
+  location?: Location;
 }
 
 export interface Station {

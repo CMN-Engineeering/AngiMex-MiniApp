@@ -18,7 +18,12 @@ pool.query(`
     order_state VARCHAR(50) DEFAULT 'none',
     user_id VARCHAR(100) NOT NULL,
     amount NUMERIC NOT NULL,
+    total_amount NUMERIC NOT NULL DEFAULT 0,
+    order_amount NUMERIC NOT NULL DEFAULT 0,
+    shipping_fee NUMERIC NOT NULL DEFAULT 0,
     shipping_address TEXT,
+    location_latitude DOUBLE PRECISION,
+    location_longitude DOUBLE PRECISION,
     receiver_name VARCHAR(255),
     phone_number VARCHAR(50),
     note VARCHAR(100),
@@ -26,14 +31,28 @@ pool.query(`
     stock_reserved BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
-`).then(() => console.log("Database table 'orders' is ready."))
-  .catch(err => console.error("Error creating table:", err));
+`).then(async () => {
+  console.log("Database table 'orders' is ready.");
+  await pool.query(`
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS total_amount NUMERIC NOT NULL DEFAULT 0;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_amount NUMERIC NOT NULL DEFAULT 0;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_fee NUMERIC NOT NULL DEFAULT 0;
+    UPDATE orders
+    SET total_amount = amount,
+        order_amount = amount
+    WHERE total_amount = 0 AND order_amount = 0 AND amount > 0;
+  `);
+}).catch(err => console.error("Error creating or migrating order table:", err));
 pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS note VARCHAR(100);`)
   .catch(err => console.error("Error adding order note column:", err));
 pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS stock_reserved BOOLEAN DEFAULT FALSE;`)
   .catch(err => console.error("Error adding stock reservation column:", err));
 pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS checkout_order_id VARCHAR(100) UNIQUE;`)
   .catch(err => console.error("Error adding Checkout order ID column:", err));
+pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS location_latitude DOUBLE PRECISION;`)
+  .catch(err => console.error("Error adding order location latitude column:", err));
+pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS location_longitude DOUBLE PRECISION;`)
+  .catch(err => console.error("Error adding order location longitude column:", err));
 const app = express();
 app.use(express.json());
 
@@ -87,6 +106,65 @@ function normalizePaymentAmount(value) {
   const digitsOnly = text.replace(/[^0-9]/g, '');
   if (!digitsOnly) return null;
   return Number(digitsOnly);
+}
+
+function normalizeLocationCoordinates(latitude, longitude) {
+  const hasLatitude = latitude !== undefined && latitude !== null && latitude !== '';
+  const hasLongitude = longitude !== undefined && longitude !== null && longitude !== '';
+
+  if (!hasLatitude && !hasLongitude) {
+    return { valid: true, latitude: null, longitude: null };
+  }
+  if (!hasLatitude || !hasLongitude) {
+    return { valid: false, latitude: null, longitude: null };
+  }
+
+  const normalizedLatitude = Number(latitude);
+  const normalizedLongitude = Number(longitude);
+  const valid =
+    Number.isFinite(normalizedLatitude) &&
+    normalizedLatitude >= -90 &&
+    normalizedLatitude <= 90 &&
+    Number.isFinite(normalizedLongitude) &&
+    normalizedLongitude >= -180 &&
+    normalizedLongitude <= 180;
+
+  return valid
+    ? {
+        valid: true,
+        latitude: normalizedLatitude,
+        longitude: normalizedLongitude,
+      }
+    : { valid: false, latitude: null, longitude: null };
+}
+
+function normalizeOrderAmounts({ amount, order_amount, shipping_fee, total_amount }) {
+  const totalAmount = Number(total_amount ?? amount);
+  const submittedAmount = Number(amount ?? totalAmount);
+  const orderAmount = Number(order_amount ?? totalAmount);
+  const shippingFee = Number(shipping_fee ?? 0);
+  const valid =
+    Number.isSafeInteger(totalAmount) &&
+    totalAmount > 0 &&
+    submittedAmount === totalAmount &&
+    Number.isSafeInteger(orderAmount) &&
+    orderAmount >= 0 &&
+    Number.isSafeInteger(shippingFee) &&
+    shippingFee >= 0 &&
+    orderAmount + shippingFee === totalAmount;
+
+  return { valid, orderAmount, shippingFee, totalAmount };
+}
+
+function formatOrderAmounts(order) {
+  const totalAmount = Number(order.total_amount ?? order.amount);
+  const orderAmount = Number(order.order_amount ?? totalAmount);
+  const shippingFee = Number(order.shipping_fee ?? 0);
+  return [
+    `Tiền hàng: ${orderAmount.toLocaleString('vi-VN')}đ`,
+    `Phí vận chuyển: ${shippingFee.toLocaleString('vi-VN')}đ`,
+    `Tổng thanh toán: ${totalAmount.toLocaleString('vi-VN')}đ`,
+  ];
 }
 
 function getOrderQuantities(orderDetails) {
@@ -200,7 +278,7 @@ async function sendCodOrderNotification(order) {
       '📦 <b>Đơn hàng COD mới</b>',
       `Mã đơn: <code>${escapeHtml(order.order_code)}</code>`,
       `User ID: <code>${escapeHtml(order.user_id)}</code>`,
-      `Số tiền: ${Number(order.amount).toLocaleString('vi-VN')}đ`,
+      ...formatOrderAmounts(order),
       order.receiver_name ? `Tên người nhận hàng: ${escapeHtml(order.receiver_name)}` : null,
       order.phone_number ? `SĐT: ${escapeHtml(order.phone_number)}` : null,
       order.note ? `Ghi chú: ${escapeHtml(order.note)}` : null,
@@ -272,7 +350,7 @@ async function confirmBankOrder(orderCode, transferAmount) {
         '✅ <b>Đơn hàng đã thanh toán</b>',
         `Mã đơn: <code>${escapeHtml(order.order_code)}</code>`,
         `User ID: <code>${escapeHtml(order.user_id)}</code>`,
-        `Số tiền: ${Number(order.amount).toLocaleString('vi-VN')}đ`,
+        ...formatOrderAmounts(order),
         order.receiver_name ? `Tên người nhận hàng: ${escapeHtml(order.receiver_name)}` : null,
         order.phone_number ? `SĐT: ${escapeHtml(order.phone_number)}` : null,
         order.note ? `Ghi chú: ${escapeHtml(order.note)}` : null,
@@ -373,7 +451,12 @@ app.get('/order_cod', async (req, res) => {
   const {
     order_code,
     amount,
+    order_amount,
+    shipping_fee,
+    total_amount,
     shipping_address,
+    location_latitude,
+    location_longitude,
     receiver_name,
     phone_number,
     note,
@@ -381,8 +464,10 @@ app.get('/order_cod', async (req, res) => {
     order,
     order_state,
   } = req.query;
+  const location = normalizeLocationCoordinates(location_latitude, location_longitude);
+  const amounts = normalizeOrderAmounts({ amount, order_amount, shipping_fee, total_amount });
 
-  if (amount === undefined || !user_id || !order || order_state !== 'cod') {
+  if (!amounts.valid || !user_id || !order || order_state !== 'cod' || !location.valid) {
     return res.json({ success: false, error_code: 'invalid_request' });
   }
 
@@ -423,9 +508,9 @@ app.get('/order_cod', async (req, res) => {
     }
 
     await client.query(
-      `INSERT INTO orders (order_code, order_state, user_id, amount, shipping_address, receiver_name, phone_number, note, order_details, stock_reserved)
-       VALUES ($1, 'cod', $2, $3, $4, $5, $6, $7, $8, TRUE)`,
-      [targetOrderCode, String(user_id), amount, shipping_address, receiver_name, phone_number, String(note ?? '').slice(0, 100), orderBreakdown]
+      `INSERT INTO orders (order_code, order_state, user_id, amount, total_amount, order_amount, shipping_fee, shipping_address, location_latitude, location_longitude, receiver_name, phone_number, note, order_details, stock_reserved)
+       VALUES ($1, 'cod', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, TRUE)`,
+      [targetOrderCode, String(user_id), amounts.totalAmount, amounts.totalAmount, amounts.orderAmount, amounts.shippingFee, shipping_address, location.latitude, location.longitude, receiver_name, phone_number, String(note ?? '').slice(0, 100), orderBreakdown]
     );
     await adjustProductStock(client, orderBreakdown, 'decrease');
 
@@ -433,7 +518,10 @@ app.get('/order_cod', async (req, res) => {
     await sendCodOrderNotification({
       order_code: targetOrderCode,
       user_id: String(user_id),
-      amount,
+      amount: amounts.totalAmount,
+      total_amount: amounts.totalAmount,
+      order_amount: amounts.orderAmount,
+      shipping_fee: amounts.shippingFee,
       receiver_name,
       phone_number,
       note,
@@ -460,16 +548,23 @@ app.get('/order_paying', async (req, res) => {
   const {
     order_code,
     amount,
+    order_amount,
+    shipping_fee,
+    total_amount,
     shipping_address,
+    location_latitude,
+    location_longitude,
     receiver_name,
     phone_number,
     note,
     user_id,
     order,
   } = req.query;
+  const location = normalizeLocationCoordinates(location_latitude, location_longitude);
+  const amounts = normalizeOrderAmounts({ amount, order_amount, shipping_fee, total_amount });
   console.log(`Order ${order_code} setting to Wait for Paying`)
   
-  if (!order_code || amount === undefined) {
+  if (!order_code || !amounts.valid || !location.valid) {
     return res.json({ success: false, error_code: 'invalid_request' });
   }
 
@@ -492,9 +587,9 @@ app.get('/order_paying', async (req, res) => {
 
     if (existingOrder.rowCount === 0) {
       await client.query(
-        `INSERT INTO orders (order_code, order_state, user_id, amount, shipping_address, receiver_name, phone_number, note, order_details, stock_reserved)
-         VALUES ($1, 'waiting for payment', $2, $3, $4, $5, $6, $7, $8, TRUE)`,
-        [order_code, user_id, amount, shipping_address, receiver_name, phone_number, String(note ?? '').slice(0, 100), orderBreakdown]
+        `INSERT INTO orders (order_code, order_state, user_id, amount, total_amount, order_amount, shipping_fee, shipping_address, location_latitude, location_longitude, receiver_name, phone_number, note, order_details, stock_reserved)
+         VALUES ($1, 'waiting for payment', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, TRUE)`,
+        [order_code, user_id, amounts.totalAmount, amounts.totalAmount, amounts.orderAmount, amounts.shippingFee, shipping_address, location.latitude, location.longitude, receiver_name, phone_number, String(note ?? '').slice(0, 100), orderBreakdown]
       );
       await adjustProductStock(client, orderBreakdown, 'decrease');
     } else if (existingOrder.rows[0].order_state === 'reserved') {
@@ -502,10 +597,12 @@ app.get('/order_paying', async (req, res) => {
       await client.query(
         `UPDATE orders
          SET order_state = 'waiting for payment', user_id = $2, amount = $3,
-             shipping_address = $4, receiver_name = $5, phone_number = $6,
-             note = $7, order_details = $8, stock_reserved = TRUE
+             total_amount = $4, order_amount = $5, shipping_fee = $6,
+             shipping_address = $7, location_latitude = $8, location_longitude = $9,
+             receiver_name = $10, phone_number = $11,
+             note = $12, order_details = $13, stock_reserved = TRUE
          WHERE order_code = $1`,
-        [order_code, user_id, amount, shipping_address, receiver_name, phone_number, String(note ?? '').slice(0, 100), orderBreakdown]
+        [order_code, user_id, amounts.totalAmount, amounts.totalAmount, amounts.orderAmount, amounts.shippingFee, shipping_address, location.latitude, location.longitude, receiver_name, phone_number, String(note ?? '').slice(0, 100), orderBreakdown]
       );
     }
 
@@ -665,18 +762,22 @@ app.post('/update_order_delivery', async (req, res) => {
     order_code,
     user_id,
     shipping_address,
+    location_latitude,
+    location_longitude,
     receiver_name,
     phone_number,
   } = req.body;
+  const location = normalizeLocationCoordinates(location_latitude, location_longitude);
 
-  if (!order_code || !user_id || !shipping_address || !receiver_name || !phone_number) {
+  if (!order_code || !user_id || !shipping_address || !receiver_name || !phone_number || !location.valid) {
     return res.status(400).json({ success: false, error: 'missing delivery information' });
   }
 
   try {
     const result = await pool.query(
       `UPDATE orders
-       SET shipping_address = $3, receiver_name = $4, phone_number = $5
+       SET shipping_address = $3, receiver_name = $4, phone_number = $5,
+           location_latitude = $6, location_longitude = $7
        WHERE order_code = $1 AND user_id = $2 AND order_state = 'waiting for payment'
        RETURNING order_code`,
       [
@@ -685,6 +786,8 @@ app.post('/update_order_delivery', async (req, res) => {
         String(shipping_address).slice(0, 500),
         String(receiver_name).slice(0, 255),
         String(phone_number).slice(0, 50),
+        location.latitude,
+        location.longitude,
       ]
     );
 
@@ -824,7 +927,7 @@ app.post('/confirm_checkout_payment', async (req, res) => {
         '✅ <b>Đơn hàng đã thanh toán</b>',
         `Mã đơn: <code>${escapeHtml(orderInfo.order_code)}</code>`,
         `User ID: <code>${escapeHtml(orderInfo.user_id)}</code>`,
-        `Số tiền: ${Number(orderInfo.amount).toLocaleString('vi-VN')}đ`,
+        ...formatOrderAmounts(orderInfo),
         orderInfo.receiver_name ? `Tên người nhận hàng: ${escapeHtml(orderInfo.receiver_name)}` : null,
         orderInfo.phone_number ? `SĐT: ${escapeHtml(orderInfo.phone_number)}` : null,
         orderInfo.note ? `Ghi chú: ${escapeHtml(orderInfo.note)}` : null,
@@ -851,22 +954,28 @@ app.post('/order_cod', async (req, res) => {
     order_code,
     checkout_order_id,
     amount,
+    order_amount,
+    shipping_fee,
+    total_amount,
     shipping_address,
+    location_latitude,
+    location_longitude,
     receiver_name,
     phone_number,
     note,
     user_id,
     order,
   } = req.body || {};
-  const numericAmount = Number(amount);
+  const amounts = normalizeOrderAmounts({ amount, order_amount, shipping_fee, total_amount });
+  const location = normalizeLocationCoordinates(location_latitude, location_longitude);
 
   if (
     !order_code ||
     !checkout_order_id ||
     !user_id ||
-    !Number.isFinite(numericAmount) ||
-    numericAmount <= 0 ||
+    !amounts.valid ||
     !shipping_address ||
+    !location.valid ||
     !receiver_name ||
     !phone_number ||
     !order ||
@@ -912,15 +1021,22 @@ app.post('/order_cod', async (req, res) => {
     }
     await client.query(
       `UPDATE orders
-       SET order_state = 'cod', amount = $3, shipping_address = $4,
-           receiver_name = $5, phone_number = $6, note = $7,
-           order_details = $8, stock_reserved = TRUE
+       SET order_state = 'cod', amount = $3, total_amount = $4,
+           order_amount = $5, shipping_fee = $6, shipping_address = $7,
+           location_latitude = $8, location_longitude = $9,
+           receiver_name = $10, phone_number = $11, note = $12,
+           order_details = $13, stock_reserved = TRUE
        WHERE order_code = $1 AND user_id = $2`,
       [
         String(order_code),
         String(user_id),
-        numericAmount,
+        amounts.totalAmount,
+        amounts.totalAmount,
+        amounts.orderAmount,
+        amounts.shippingFee,
         String(shipping_address).slice(0, 500),
+        location.latitude,
+        location.longitude,
         String(receiver_name).slice(0, 255),
         String(phone_number).slice(0, 50),
         String(note ?? '').slice(0, 100),
@@ -932,7 +1048,10 @@ app.post('/order_cod', async (req, res) => {
     await sendCodOrderNotification({
       order_code: String(order_code),
       user_id: String(user_id),
-      amount: numericAmount,
+      amount: amounts.totalAmount,
+      total_amount: amounts.totalAmount,
+      order_amount: amounts.orderAmount,
+      shipping_fee: amounts.shippingFee,
       receiver_name,
       phone_number,
       note,
@@ -955,21 +1074,27 @@ app.post('/order_pending_bank', async (req, res) => {
   const {
     order_code,
     amount,
+    order_amount,
+    shipping_fee,
+    total_amount,
     shipping_address,
+    location_latitude,
+    location_longitude,
     receiver_name,
     phone_number,
     note,
     user_id,
     order,
   } = req.body || {};
-  const numericAmount = Number(amount);
+  const amounts = normalizeOrderAmounts({ amount, order_amount, shipping_fee, total_amount });
+  const location = normalizeLocationCoordinates(location_latitude, location_longitude);
 
   if (
     !order_code ||
     !user_id ||
-    !Number.isFinite(numericAmount) ||
-    numericAmount <= 0 ||
+    !amounts.valid ||
     !shipping_address ||
+    !location.valid ||
     !receiver_name ||
     !phone_number ||
     !order ||
@@ -1009,15 +1134,22 @@ app.post('/order_pending_bank', async (req, res) => {
     await adjustProductStock(client, order, 'decrease');
     await client.query(
       `UPDATE orders
-       SET order_state = 'pending_bank', amount = $3, shipping_address = $4,
-           receiver_name = $5, phone_number = $6, note = $7,
-           order_details = $8, stock_reserved = TRUE
+       SET order_state = 'pending_bank', amount = $3, total_amount = $4,
+           order_amount = $5, shipping_fee = $6, shipping_address = $7,
+           location_latitude = $8, location_longitude = $9,
+           receiver_name = $10, phone_number = $11, note = $12,
+           order_details = $13, stock_reserved = TRUE
        WHERE order_code = $1 AND user_id = $2`,
       [
         String(order_code),
         String(user_id),
-        numericAmount,
+        amounts.totalAmount,
+        amounts.totalAmount,
+        amounts.orderAmount,
+        amounts.shippingFee,
         String(shipping_address).slice(0, 500),
+        location.latitude,
+        location.longitude,
         String(receiver_name).slice(0, 255),
         String(phone_number).slice(0, 50),
         String(note ?? '').slice(0, 100),
@@ -1238,7 +1370,7 @@ app.get('/delete_order', async (req, res) => {
         `Mã đơn: <code>${escapeHtml(deletedOrder.order_code)}</code>`,
         `User ID: <code>${escapeHtml(deletedOrder.user_id)}</code>`,
         `Trạng thái trước khi hủy: ${escapeHtml(deletedOrder.order_state)}`,
-        `Số tiền: ${Number(deletedOrder.amount).toLocaleString('vi-VN')}đ`,
+        ...formatOrderAmounts(deletedOrder),
         deletedOrder.receiver_name ? `Tên người nhận hàng: ${escapeHtml(deletedOrder.receiver_name)}` : null,
         deletedOrder.phone_number ? `SĐT: ${escapeHtml(deletedOrder.phone_number)}` : null,
         deletedOrder.shipping_address ? `Địa chỉ: ${escapeHtml(deletedOrder.shipping_address)}` : null,
@@ -1258,10 +1390,60 @@ app.get('/delete_order', async (req, res) => {
   }
 });
 
+const ZALO_APP_SECRET_KEY = "z4ifCKL9X5TXWNg050XB";
+
+app.post('/get_location', async (req, res) => {
+  const { access_token, code } = req.body || {};
+  if (
+    typeof access_token !== 'string' ||
+    !access_token.trim() ||
+    typeof code !== 'string' ||
+    !code.trim()
+  ) {
+    return res.status(400).json({ success: false, error: 'invalid_request' });
+  }
+
+  try {
+    const response = await fetch('https://graph.zalo.me/v2.0/me/info', {
+      method: 'GET',
+      headers: {
+        access_token,
+        code,
+        secret_key: ZALO_APP_SECRET_KEY,
+      },
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      console.error('Zalo location lookup failed:', response.status);
+      return res.status(502).json({ success: false, error: 'location_lookup_failed' });
+    }
+
+    const locationData = data?.data?.data ?? data?.data ?? data;
+    const latitude = Number(locationData?.latitude);
+    const longitude = Number(locationData?.longitude);
+    if (
+      !Number.isFinite(latitude) ||
+      latitude < -90 ||
+      latitude > 90 ||
+      !Number.isFinite(longitude) ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      console.error('Zalo location response did not contain valid coordinates.');
+      return res.status(502).json({ success: false, error: 'invalid_location_response' });
+    }
+
+    return res.json({ success: true, location: { lat: latitude, lng: longitude } });
+  } catch (error) {
+    console.error('Error fetching Zalo location:', error);
+    return res.status(502).json({ success: false, error: 'location_lookup_failed' });
+  }
+});
+
 app.get('/get_phone_num', async (req, res) => {
   const { access_token, code } = req.query;
   const endpoint = 'https://graph.zalo.me/v2.0/me/info';
-  const secretKey = "z4ifCKL9X5TXWNg050XB";
+  const secretKey = ZALO_APP_SECRET_KEY;
   if (!secretKey) {
     return res.status(500).json({ success: false, error: 'missing_zalo_app_secret' });
   }

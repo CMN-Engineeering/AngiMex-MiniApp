@@ -341,6 +341,19 @@ const allOrdersState = atomWithRefresh(async (get) => {
           provinceName: "",
           wardCode: "",
           wardName: "",
+          ...(order.location_latitude !== null &&
+          order.location_latitude !== undefined &&
+          order.location_longitude !== null &&
+          order.location_longitude !== undefined &&
+          Number.isFinite(Number(order.location_latitude)) &&
+          Number.isFinite(Number(order.location_longitude))
+            ? {
+                location: {
+                  lat: Number(order.location_latitude),
+                  lng: Number(order.location_longitude),
+                },
+              }
+            : {}),
         },
         total: Number(order.amount),
         note: String(order.note ?? "").slice(0, 100),

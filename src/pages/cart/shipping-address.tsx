@@ -4,7 +4,7 @@ import {
   shippingAddressState,
   userInfoState,
 } from "@/state";
-import { Order } from "@/types";
+import { Location, Order, ShippingAddress } from "@/types";
 import { backendPost, getCurrentUserId } from "@/utils/backend";
 import { formatShippingAddress } from "@/utils/format";
 import { useAtom, useAtomValue } from "jotai";
@@ -27,6 +27,42 @@ const ADDRESS_EFFECTIVE_DATE = "2025-07-01";
 interface AddressOption {
   code: string;
   name: string;
+}
+
+async function geocodeAddress(address: string): Promise<Location> {
+  const apiKey = "pk.57d3574bfb51463df8e8c20bfcf47f65";
+  if (!apiKey) {
+    throw new Error("locationiq_api_key_missing");
+  }
+  console.log(address);
+
+  const url = new URL("https://us1.locationiq.com/v1/search");
+  url.searchParams.set("key", apiKey);
+  url.searchParams.set("q", address);
+  url.searchParams.set("format", "json");
+  url.searchParams.set("limit", "1");
+  url.searchParams.set("countrycodes", "vn");
+
+  const response = await fetch(url.toString());
+  if (!response.ok) {
+    throw new Error(`locationiq_geocoding_failed_${response.status}`);
+  }
+
+  const results: unknown = await response.json();
+  if (!Array.isArray(results) || results.length === 0) {
+    throw new Error("locationiq_address_not_found");
+  }
+
+  const firstResult = results[0] as
+    | { lat?: unknown; lon?: unknown }
+    | null;
+  const latitude = Number(firstResult?.lat);
+  const longitude = Number(firstResult?.lon);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    throw new Error("locationiq_address_not_found");
+  }
+
+  return { lat: latitude, lng: longitude };
 }
 
 // Bỏ dấu tiếng Việt để tìm kiếm không phân biệt có dấu/không dấu
@@ -186,16 +222,17 @@ function ShippingAddressPage() {
     ? editingOrder.delivery
     : address;
   const [provinceCode, setProvinceCode] = useState(
-    (initialAddress as any)?.provinceCode ?? ""
+    initialAddress?.provinceCode ?? ""
   );
-  const [wardCode, setWardCode] = useState((initialAddress as any)?.wardCode ?? "");
-  const [detail, setDetail] = useState((initialAddress as any)?.detail ?? "");
+  const [wardCode, setWardCode] = useState(initialAddress?.wardCode ?? "");
+  const [detail, setDetail] = useState(initialAddress?.detail ?? "");
   const [recipientName, setRecipientName] = useState(
     initialAddress?.name || userInfo?.name || ""
   );
   const [recipientPhone, setRecipientPhone] = useState(
     initialAddress?.phone || userInfo?.phone || ""
   );
+  const [geocodingAddress, setGeocodingAddress] = useState(false);
   const [savingOrder, setSavingOrder] = useState(false);
   const [loadingContactInfo, setLoadingContactInfo] = useState(false);
 
@@ -267,7 +304,6 @@ function ShippingAddressPage() {
       ignore = true;
     };
   }, [provinceCode]);
-
   return (
     <form
       className="h-full flex flex-col justify-between"
@@ -281,34 +317,62 @@ function ShippingAddressPage() {
           return;
         }
 
-        const data = new FormData(e.currentTarget);
-        const newAddress: Record<string, any> = {};
-        data.forEach((value, key) => {
-          newAddress[key] = value;
-        });
-
         const province = provinces.find((p) => p.code === provinceCode);
         const ward = wards.find((w) => w.code === wardCode);
 
-        newAddress.provinceCode = provinceCode;
-        newAddress.provinceName = province?.name ?? "";
-        newAddress.wardCode = wardCode;
-        newAddress.wardName = ward?.name ?? "";
-        newAddress.detail = detail;
-        newAddress.name = recipientName;
-        newAddress.phone = recipientPhone;
+        const addressDetails: ShippingAddress = {
+          provinceCode,
+          provinceName: province?.name ?? "",
+          wardCode,
+          wardName: ward?.name ?? "",
+          detail: detail.trim(),
+          name: recipientName.trim(),
+          phone: recipientPhone.trim(),
+        };
+
+        setGeocodingAddress(true);
+        let location: Location;
+        try {
+          location = await geocodeAddress(formatShippingAddress(addressDetails));
+        } catch (error) {
+          console.warn("Failed to geocode shipping address:", error);
+          toast.error(
+            error instanceof Error &&
+              error.message === "locationiq_api_key_missing"
+              ? "Thiếu cấu hình LocationIQ. Vui lòng liên hệ hỗ trợ."
+              : error instanceof Error &&
+                error.message === "locationiq_address_not_found"
+              ? "Không tìm thấy tọa độ địa chỉ. Vui lòng kiểm tra lại địa chỉ."
+              : "Không thể tra cứu tọa độ địa chỉ. Vui lòng thử lại sau."
+          );
+          return;
+        } finally {
+          setGeocodingAddress(false);
+        }
+
+        const shippingAddress: ShippingAddress = { ...addressDetails, location };
 
         if (editingOrder) {
           setSavingOrder(true);
           try {
             const userId = await getCurrentUserId();
             const response = await backendPost<
-              Record<string, string>,
+              {
+                order_code: string;
+                user_id: string;
+                shipping_address: string;
+                location_latitude: number | null;
+                location_longitude: number | null;
+                receiver_name: string;
+                phone_number: string;
+              },
               { success: boolean; error?: string }
             >("/update_order_delivery", {
               order_code: String(editingOrder.id),
               user_id: userId,
-              shipping_address: formatShippingAddress(newAddress as any),
+              shipping_address: formatShippingAddress(shippingAddress),
+              location_latitude: shippingAddress.location?.lat ?? null,
+              location_longitude: shippingAddress.location?.lng ?? null,
               receiver_name: recipientName.trim(),
               phone_number: recipientPhone.trim(),
             });
@@ -321,7 +385,7 @@ function ShippingAddressPage() {
               replace: true,
               state: {
                 ...editingOrder,
-                delivery: { ...editingOrder.delivery, ...newAddress },
+                delivery: { ...editingOrder.delivery, ...shippingAddress },
               },
             });
           } catch (error) {
@@ -333,12 +397,13 @@ function ShippingAddressPage() {
           return;
         }
 
-        setAddress(newAddress as typeof address);
+        setAddress(shippingAddress);
         toast.success("Đã cập nhật địa chỉ");
         navigate(-1);
       }}
     >
       <div className="py-2 space-y-2">
+
         <div className="bg-section p-4 grid gap-4" id="address-form">
           <SearchableSelect
             label="Tỉnh/Thành phố"
@@ -364,7 +429,7 @@ function ShippingAddressPage() {
 
           <Input
             name="detail"
-            label="Địa chỉ chi tiết"
+            label="Số nhà, tên đường"
             placeholder="Số nhà, tên đường..."
             value={detail}
             required
@@ -372,14 +437,6 @@ function ShippingAddressPage() {
           />
         </div>
         <div className="bg-section p-4 grid gap-4">
-          <Button
-            htmlType="button"
-            fullWidth
-            loading={loadingContactInfo}
-            onClick={handleGetContactInfo}
-          >
-            Lấy thông tin người nhận
-          </Button>
           <Input
             name="name"
             label="Tên người nhận"
@@ -397,6 +454,14 @@ function ShippingAddressPage() {
             title="Số điện thoại phải bắt đầu bằng 0 và có đúng 10 chữ số"
             onChange={(event) => setRecipientPhone(event.target.value.replace(/\D/g, "").slice(0, 10))}
           />
+          <Button
+            htmlType="button"
+            fullWidth
+            loading={loadingContactInfo}
+            onClick={handleGetContactInfo}
+          >
+            Lấy thông tin người nhận
+          </Button>
         </div>
         <Button
           fullWidth
@@ -414,7 +479,12 @@ function ShippingAddressPage() {
         </Button>
       </div>
       <div className="p-6 pt-4 bg-section">
-        <Button htmlType="submit" fullWidth loading={savingOrder} disabled={savingOrder}>
+        <Button
+          htmlType="submit"
+          fullWidth
+          loading={savingOrder || geocodingAddress}
+          disabled={savingOrder || geocodingAddress}
+        >
           Xong
         </Button>
       </div>

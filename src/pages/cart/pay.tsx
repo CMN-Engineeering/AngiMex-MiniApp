@@ -15,6 +15,8 @@ import {
   userInfoState,
 } from "@/state";
 import { formatPrice, formatShippingAddress } from "@/utils/format";
+import { calculateDistance } from "@/utils/location";
+import { calculateShippingFee } from "@/utils/shipping";
 import { Button, Modal } from "zmp-ui";
 import toast from "react-hot-toast";
 import { useNavigate } from "react-router-dom";
@@ -91,7 +93,7 @@ function reserveOrderCode(userID: string) {
 }
 
 export default function Pay() {
-  const { totalAmount } = useAtomValue(cartTotalState);
+  const { totalAmount: subtotal } = useAtomValue(cartTotalState);
   const [cart, setCart] = useAtom(cartState);
   const [, setNote] = useAtom(cartNoteState);
   const note = useAtomValue(cartNoteState);
@@ -114,7 +116,12 @@ export default function Pay() {
   const checkoutOrderSnapshotRef = useRef<{
     order_code: string;
     amount: number;
+    order_amount: number;
+    shipping_fee: number;
+    total_amount: number;
     shipping_address: string;
+    location_latitude: number | null;
+    location_longitude: number | null;
     receiver_name: string;
     phone_number: string;
     note: string;
@@ -129,6 +136,22 @@ export default function Pay() {
     useMemo(() => loadable(selectedStationState), [])
   );
   const userInfo = useAtomValue(useMemo(() => loadable(userInfoState), []));
+  const shippingFee =
+    deliveryMode === "pickup"
+      ? 0
+      : shippingAddress?.location &&
+        selectedStation.state === "hasData" &&
+        selectedStation.data
+      ? calculateShippingFee(
+          calculateDistance(
+            selectedStation.data.location.lat,
+            selectedStation.data.location.lng,
+            shippingAddress.location.lat,
+            shippingAddress.location.lng
+          )
+        )
+      : null;
+  const totalAmount = subtotal + (shippingFee ?? 0);
 
   const shippingAddressText =
     deliveryMode === "shipping"
@@ -155,6 +178,11 @@ export default function Pay() {
 
   const setOrdertoWaitforPaying = async () => {
     if (reserving || paying) return;
+
+    if (shippingFee === null) {
+      toast.error("Vui lòng nhập địa chỉ giao hàng để tính phí vận chuyển.");
+      return;
+    }
 
     if (
       !receiverName.trim() ||
@@ -185,7 +213,20 @@ export default function Pay() {
       url.searchParams.set("order_code", newOrderCode);
       url.searchParams.set("order_state", "pending");
       url.searchParams.set("amount", String(totalAmount));
+      url.searchParams.set("order_amount", String(subtotal));
+      url.searchParams.set("shipping_fee", String(shippingFee));
+      url.searchParams.set("total_amount", String(totalAmount));
       url.searchParams.set("shipping_address", shippingAddressText);
+      if (shippingAddress?.location) {
+        url.searchParams.set(
+          "location_latitude",
+          String(shippingAddress.location.lat)
+        );
+        url.searchParams.set(
+          "location_longitude",
+          String(shippingAddress.location.lng)
+        );
+      }
       url.searchParams.set("receiver_name", receiverName);
       url.searchParams.set("phone_number", phoneNumber);
       url.searchParams.set("note", note.slice(0, 100));
@@ -249,6 +290,10 @@ export default function Pay() {
 
   const createOrder = async () => {
     if (reserving || paying) return;
+    if (shippingFee === null) {
+      toast.error("Vui lòng nhập địa chỉ giao hàng để tính phí vận chuyển.");
+      return;
+    }
     if (
       !cart.length ||
       !Number.isFinite(totalAmount) ||
@@ -287,7 +332,12 @@ export default function Pay() {
       const orderSnapshot = {
         order_code: currentOrderCode,
         amount: totalAmount,
+        order_amount: subtotal,
+        shipping_fee: shippingFee,
+        total_amount: totalAmount,
         shipping_address: shippingAddressText,
+        location_latitude: shippingAddress?.location?.lat ?? null,
+        location_longitude: shippingAddress?.location?.lng ?? null,
         receiver_name: receiverName,
         phone_number: phoneNumber,
         note: note.slice(0, 100),
