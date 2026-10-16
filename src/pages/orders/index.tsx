@@ -1,19 +1,17 @@
 import { Tabs } from "zmp-ui";
 import OrderList from "./order-list";
-import { ordersState } from "@/state";
+import { ordersAwaitingConfirmationState, ordersState } from "@/state";
 import { useNavigate, useParams } from "react-router-dom";
 
 function OrdersPage() {
   const { status } = useParams();
   const navigate = useNavigate();
-  const activeKey = [
-    "waiting for payment",
-    "cod",
-    "confirmed",
-    "completed",
-  ].includes(status ?? "")
-    ? status
-    : "waiting for payment";
+  const activeKey =
+    status === "cod" || status === "confirmed"
+      ? "cod"
+      : status === "completed"
+      ? "completed"
+      : "waiting for payment";
 
   return (
     <Tabs
@@ -24,10 +22,7 @@ function OrdersPage() {
         <OrderList ordersState={ordersState("waiting for payment")} />
       </Tabs.Tab>
       <Tabs.Tab key="cod" label="Chờ xác nhận">
-        <OrderList ordersState={ordersState("cod")} />
-      </Tabs.Tab>
-      <Tabs.Tab key="confirmed" label="Chờ giao hàng">
-        <OrderList ordersState={ordersState("confirmed")} />
+        <OrderList ordersState={ordersAwaitingConfirmationState} />
       </Tabs.Tab>
       <Tabs.Tab key="completed" label="Giao thành công">
         <OrderList ordersState={ordersState("completed")} />

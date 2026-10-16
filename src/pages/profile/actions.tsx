@@ -25,7 +25,7 @@ export default function ProfileActions() {
         {
           label: "Đang giao",
           icon: PackageIcon,
-          onClick: () => goToOrders("shipping"),
+          onClick: () => goToOrders("confirmed"),
         },
         {
           label: "Lịch sử",

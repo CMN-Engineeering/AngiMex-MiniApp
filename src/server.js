@@ -28,6 +28,7 @@ pool.query(`
     phone_number VARCHAR(50),
     note VARCHAR(100),
     order_details JSONB,
+    payment_method VARCHAR(20),
     stock_reserved BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
@@ -37,10 +38,18 @@ pool.query(`
     ALTER TABLE orders ADD COLUMN IF NOT EXISTS total_amount NUMERIC NOT NULL DEFAULT 0;
     ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_amount NUMERIC NOT NULL DEFAULT 0;
     ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_fee NUMERIC NOT NULL DEFAULT 0;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method VARCHAR(20);
     UPDATE orders
     SET total_amount = amount,
         order_amount = amount
     WHERE total_amount = 0 AND order_amount = 0 AND amount > 0;
+    UPDATE orders
+    SET payment_method = CASE
+      WHEN order_state IN ('cod', 'pay on delivery') THEN 'COD'
+      WHEN order_state IN ('pending_bank', 'waiting for payment') THEN 'BANK'
+      ELSE payment_method
+    END
+    WHERE payment_method IS NULL;
   `);
 }).catch(err => console.error("Error creating or migrating order table:", err));
 pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS note VARCHAR(100);`)
@@ -78,7 +87,8 @@ app.get('/get_app_health', async (req, res) => {
 
     res.json({
       success: true,
-      isHealthy: latestHealth?.is_healthy === true,
+      isHealthy:
+        latestHealth === undefined ? null : latestHealth.is_healthy === true,
       updatedAt: latestHealth?.updated_at ?? null,
     });
   } catch (error) {
@@ -508,8 +518,8 @@ app.get('/order_cod', async (req, res) => {
     }
 
     await client.query(
-      `INSERT INTO orders (order_code, order_state, user_id, amount, total_amount, order_amount, shipping_fee, shipping_address, location_latitude, location_longitude, receiver_name, phone_number, note, order_details, stock_reserved)
-       VALUES ($1, 'cod', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, TRUE)`,
+      `INSERT INTO orders (order_code, order_state, user_id, amount, total_amount, order_amount, shipping_fee, shipping_address, location_latitude, location_longitude, receiver_name, phone_number, note, order_details, payment_method, stock_reserved)
+       VALUES ($1, 'cod', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'COD', TRUE)`,
       [targetOrderCode, String(user_id), amounts.totalAmount, amounts.totalAmount, amounts.orderAmount, amounts.shippingFee, shipping_address, location.latitude, location.longitude, receiver_name, phone_number, String(note ?? '').slice(0, 100), orderBreakdown]
     );
     await adjustProductStock(client, orderBreakdown, 'decrease');
@@ -587,8 +597,8 @@ app.get('/order_paying', async (req, res) => {
 
     if (existingOrder.rowCount === 0) {
       await client.query(
-        `INSERT INTO orders (order_code, order_state, user_id, amount, total_amount, order_amount, shipping_fee, shipping_address, location_latitude, location_longitude, receiver_name, phone_number, note, order_details, stock_reserved)
-         VALUES ($1, 'waiting for payment', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, TRUE)`,
+        `INSERT INTO orders (order_code, order_state, user_id, amount, total_amount, order_amount, shipping_fee, shipping_address, location_latitude, location_longitude, receiver_name, phone_number, note, order_details, payment_method, stock_reserved)
+         VALUES ($1, 'waiting for payment', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'BANK', TRUE)`,
         [order_code, user_id, amounts.totalAmount, amounts.totalAmount, amounts.orderAmount, amounts.shippingFee, shipping_address, location.latitude, location.longitude, receiver_name, phone_number, String(note ?? '').slice(0, 100), orderBreakdown]
       );
       await adjustProductStock(client, orderBreakdown, 'decrease');
@@ -600,7 +610,8 @@ app.get('/order_paying', async (req, res) => {
              total_amount = $4, order_amount = $5, shipping_fee = $6,
              shipping_address = $7, location_latitude = $8, location_longitude = $9,
              receiver_name = $10, phone_number = $11,
-             note = $12, order_details = $13, stock_reserved = TRUE
+             note = $12, order_details = $13, payment_method = 'BANK',
+             stock_reserved = TRUE
          WHERE order_code = $1`,
         [order_code, user_id, amounts.totalAmount, amounts.totalAmount, amounts.orderAmount, amounts.shippingFee, shipping_address, location.latitude, location.longitude, receiver_name, phone_number, String(note ?? '').slice(0, 100), orderBreakdown]
       );
@@ -1025,7 +1036,7 @@ app.post('/order_cod', async (req, res) => {
            order_amount = $5, shipping_fee = $6, shipping_address = $7,
            location_latitude = $8, location_longitude = $9,
            receiver_name = $10, phone_number = $11, note = $12,
-           order_details = $13, stock_reserved = TRUE
+           order_details = $13, payment_method = 'COD', stock_reserved = TRUE
        WHERE order_code = $1 AND user_id = $2`,
       [
         String(order_code),
@@ -1138,7 +1149,7 @@ app.post('/order_pending_bank', async (req, res) => {
            order_amount = $5, shipping_fee = $6, shipping_address = $7,
            location_latitude = $8, location_longitude = $9,
            receiver_name = $10, phone_number = $11, note = $12,
-           order_details = $13, stock_reserved = TRUE
+           order_details = $13, payment_method = 'BANK', stock_reserved = TRUE
        WHERE order_code = $1 AND user_id = $2`,
       [
         String(order_code),
@@ -1564,19 +1575,30 @@ app.get('/complete_order', async (req, res) => {
          FOR UPDATE
        ), updated AS (
          UPDATE orders AS order_row
-         SET order_state = 'completed', stock_reserved = FALSE
+         SET order_state = CASE
+               WHEN target.order_state = 'cod' THEN 'confirmed'
+               ELSE 'completed'
+             END,
+             stock_reserved = CASE
+               WHEN target.order_state = 'cod' THEN TRUE
+               ELSE FALSE
+             END
          FROM target
          WHERE order_row.order_code = target.order_code
-         RETURNING target.order_state AS previous_state, order_row.checkout_order_id
+         RETURNING target.order_state AS previous_state, order_row.order_state AS next_state,
+                   order_row.checkout_order_id, order_row.payment_method
        )
-       SELECT previous_state, checkout_order_id FROM updated`,
+       SELECT previous_state, next_state, checkout_order_id, payment_method FROM updated`,
       [order_code]
     );
 
     if (result.rowCount === 0) {
       return res.status(404).json({ success: false, error: 'order_not_found' });
     }
-    if (result.rows[0].previous_state === 'cod') {
+    if (
+      result.rows[0].next_state === 'completed' &&
+      result.rows[0].payment_method === 'COD'
+    ) {
        await updateZaloOrderStatus(result.rows[0].checkout_order_id || order_code, 'cod', 1);
     }
     res.json({ success: true });

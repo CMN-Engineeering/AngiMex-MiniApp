@@ -6,6 +6,14 @@ export function calculateShippingFee(distanceKm: number) {
   if (distanceKm <= 3) {
     return 0;
   }
-
-  return Math.ceil((distanceKm - 3) / 20) * 15000;
+  if (distanceKm < 5) {
+    return 10000;
+  }
+  if (distanceKm < 10) {
+    return 15000;
+  }
+  if (distanceKm < 15) {
+    return 20000;
+  }
+  return 30000;
 }

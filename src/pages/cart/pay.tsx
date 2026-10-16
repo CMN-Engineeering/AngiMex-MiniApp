@@ -35,6 +35,8 @@ const ORDER_CONFIRM_POLL_INTERVAL_MS = 3000;
 // This runtime-only value is cleared when the app is closed or reloaded.
 let activeOrderCode: string | null = null;
 let activeOrderCodeRequest: Promise<string> | null = null;
+let selectedPaymentMethod: "qr" | "cod" = "qr";
+let selectedPaymentMethodName = "Chuyển khoản ngân hàng";
 
 // order_not_found just means the transfer hasn't arrived yet, not a real error.
 const SILENT_PAYMENT_ERROR_CODES = new Set(["order_not_found"]);
@@ -101,13 +103,16 @@ export default function Pay() {
   const [orderCode, setOrderCode] = useState<string | null>(activeOrderCode);
   const refreshOrders = useSetAtom(refreshOrdersState);
   const navigate = useNavigate();
+  const orderCreationInProgressRef = useRef(false);
   const [paying, setPaying] = useState(false);
   const [checkingCheckoutPayment, setCheckingCheckoutPayment] = useState(false);
   const [reserving, setReserving] = useState(false);
   const [confirmingClose, setConfirmingClose] = useState(false);
-  const [confirmingOrder, setConfirmingOrder] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<"qr" | "cod">("qr");
-  const [selectedMethodName, setSelectedMethodName] = useState<string>("Chuyển khoản ngân hàng");
+  const [paymentMethod, setPaymentMethod] =
+    useState<"qr" | "cod">(selectedPaymentMethod);
+  const [paymentMethodName, setPaymentMethodName] = useState(
+    selectedPaymentMethodName
+  );
   const currentOrderCodeRef = useRef<string | null>(activeOrderCode);
   const lastErrorCodeRef = useRef<string | undefined>(undefined);
   const finalizedOrderCodeRef = useRef<string | null>(null);
@@ -129,6 +134,7 @@ export default function Pay() {
     order: Record<string, number>;
   } | null>(null);
   const savingCodOrderRef = useRef(false);
+  const savingBankOrderRef = useRef(false);
 
   const deliveryMode = useAtomValue(deliveryModeState);
   const shippingAddress = useAtomValue(shippingAddressState);
@@ -258,11 +264,16 @@ export default function Pay() {
       success: (data) => {
         const { method, displayName } = data;
         if (method === "COD") {
+          selectedPaymentMethod = "cod";
+          selectedPaymentMethodName =
+            displayName || "Thanh toán khi nhận hàng (COD)";
           setPaymentMethod("cod");
-          setSelectedMethodName(displayName || "Thanh toán khi nhận hàng (COD)");
+          setPaymentMethodName(selectedPaymentMethodName);
         } else {
+          selectedPaymentMethod = "qr";
+          selectedPaymentMethodName = displayName || "Chuyển khoản ngân hàng";
           setPaymentMethod("qr");
-          setSelectedMethodName(displayName || "Chuyển khoản ngân hàng");
+          setPaymentMethodName(selectedPaymentMethodName);
         }
       },
       fail: (err) => {
@@ -288,8 +299,20 @@ export default function Pay() {
     }
   }
 
+  const releaseOrderCreation = () => {
+    orderCreationInProgressRef.current = false;
+    setReserving(false);
+  };
+
   const createOrder = async () => {
-    if (reserving || paying) return;
+    if (
+      orderCreationInProgressRef.current ||
+      reserving ||
+      paying ||
+      checkingCheckoutPayment
+    ) {
+      return;
+    }
     if (shippingFee === null) {
       toast.error("Vui lòng nhập địa chỉ giao hàng để tính phí vận chuyển.");
       return;
@@ -309,6 +332,7 @@ export default function Pay() {
       return;
     }
 
+    orderCreationInProgressRef.current = true;
     setReserving(true);
 
     let currentOrderCode = currentOrderCodeRef.current;
@@ -346,22 +370,6 @@ export default function Pay() {
       };
       checkoutOrderSnapshotRef.current = orderSnapshot;
 
-      if (paymentMethod === "qr") {
-        const response = await fetch(ORDER_PENDING_BANK_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(orderSnapshot),
-        });
-        const savedOrder = await response.json();
-        if (!response.ok || !savedOrder.success) {
-          throw new Error(savedOrder.error_code ?? "pending_bank_save_failed");
-        }
-      }
-
-      if (paymentMethod === "qr") {
-        console.log(`Saved bank order ${currentOrderCode} as pending_bank`);
-      }
-
       const items = cart.map((cartItem) => ({
         id: String(cartItem.product.id),
         amount: cartItem.product.price * cartItem.quantity,
@@ -387,58 +395,45 @@ export default function Pay() {
         method: body.method,
         mac: String(mac),
         success: async (data) => {
-          const linkUrl = new URL(CHECKOUT_ORDER_LINK_URL);
-          const linkResponse = await fetch(linkUrl.toString(), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              order_code: currentOrderCode,
-              checkout_order_id: data.orderId,
-              method: paymentMethod === "cod" ? "COD" : "BANK",
-            }),
-          });
-          const linkData = await linkResponse.json();
-          if (!linkResponse.ok || !linkData.success) {
-            toast.error("Không thể liên kết mã đơn hàng Checkout. Vui lòng thử lại.");
-            return;
+          try {
+            checkoutOrderIdRef.current = String(data.orderId);
+            if (paymentMethod === "qr") {
+              return;
+            }
+
+            const linkResponse = await fetch(CHECKOUT_ORDER_LINK_URL, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                order_code: currentOrderCode,
+                checkout_order_id: data.orderId,
+                method: paymentMethod === "cod" ? "COD" : "BANK",
+              }),
+            });
+            const linkData = await linkResponse.json();
+            if (!linkResponse.ok || !linkData.success) {
+              throw new Error(
+                linkData.error ?? "checkout_order_link_failed"
+              );
+            }
+            console.log("Tạo đơn hàng trên Zalo thành công", data);
+            setCheckingCheckoutPayment(true);
+          } catch (error) {
+            console.error("Failed to finish Checkout order setup:", error);
+            toast.error("Không thể tạo đơn hàng. Vui lòng thử lại.");
           }
-          console.log("Tạo đơn hàng trên Zalo thành công", data);
-          checkoutOrderIdRef.current = String(data.orderId);
-          if (paymentMethod === "qr") {
-            setCheckingCheckoutPayment(false);
-            activeOrderCode = null;
-            currentOrderCodeRef.current = null;
-            setOrderCode(null);
-            setCart([]);
-            setNote("");
-            setOrderNum((currentOrderNum) => currentOrderNum + 1);
-            refreshOrders();
-            navigate("/orders/waiting for payment", { viewTransition: true });
-            return;
-          }
-          setCheckingCheckoutPayment(true);
         },
         fail: (err) => {
-          console.error("Tạo đơn hàng thất bại", err);
-          // toast.error("Không thể tạo đơn hàng.");
+          console.log("Checkout order was cancelled or failed:", err);
+          releaseOrderCreation();
         },
       });
     } catch (error) {
       console.error("Failed to create Checkout SDK order:", error);
       // toast.error("Không thể tạo đơn hàng. Vui lòng thử lại.");
     } finally {
-      setReserving(false);
+      releaseOrderCreation();
     }
-  };
-
-  const requestOrderConfirmation = () => {
-    if (paying || reserving || checkingCheckoutPayment) return;
-    setConfirmingOrder(true);
-  };
-
-  const confirmOrder = () => {
-    setConfirmingOrder(false);
-    void createOrder();
   };
 
   const showQR = () => {
@@ -513,7 +508,7 @@ export default function Pay() {
           icon: "🎉",
           duration: 10000,
         });
-        navigate("/orders/confirmed", { viewTransition: true });
+        navigate("/orders/cod", { viewTransition: true });
       }
     },
     [navigate, refreshOrders, setCart, setNote, setOrderNum]
@@ -525,6 +520,7 @@ export default function Pay() {
       (typeof data !== "object" || data === null || Array.isArray(data))
     ) {
       setCheckingCheckoutPayment(false);
+      releaseOrderCreation();
       // toast.error("Không nhận được thông tin giao dịch từ Checkout.");
       return;
     }
@@ -539,7 +535,8 @@ export default function Pay() {
         const checkoutOrderId = checkoutOrderIdRef.current;
         if (!completedOrderCode || !checkoutOrderId) {
           setCheckingCheckoutPayment(false);
-          toast.error("Không tìm thấy thông tin đơn hàng Checkout. Vui lòng thử lại.");
+          releaseOrderCreation();
+          // toast.error("Không tìm thấy thông tin đơn hàng Checkout. Vui lòng thử lại.");
           return;
         }
         if (savingCodOrderRef.current) return;
@@ -572,6 +569,75 @@ export default function Pay() {
           toast.error("Không thể lưu đơn COD đã xác nhận. Vui lòng thử lại.");
         } finally {
           savingCodOrderRef.current = false;
+          releaseOrderCreation();
+        }
+      };
+
+      const saveAndDisplayBankOrder = async () => {
+        const completedOrderCode = currentOrderCodeRef.current;
+        const orderSnapshot = checkoutOrderSnapshotRef.current;
+        if (
+          !completedOrderCode ||
+          !orderSnapshot ||
+          orderSnapshot.order_code !== completedOrderCode ||
+          !checkoutOrderIdRef.current
+        ) {
+          setCheckingCheckoutPayment(false);
+          releaseOrderCreation();
+          toast.error("Không tìm thấy thông tin đơn hàng. Vui lòng thử lại.");
+          return;
+        }
+        if (savingBankOrderRef.current) return;
+
+        savingBankOrderRef.current = true;
+        try {
+          const linkResponse = await fetch(CHECKOUT_ORDER_LINK_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              order_code: completedOrderCode,
+              checkout_order_id: checkoutOrderIdRef.current,
+              method: "BANK",
+            }),
+          });
+          const linkData = await linkResponse.json();
+          if (!linkResponse.ok || !linkData.success) {
+            throw new Error(
+              linkData.error ?? "checkout_order_link_failed"
+            );
+          }
+
+          const response = await fetch(ORDER_PENDING_BANK_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(orderSnapshot),
+          });
+          const savedOrder = await response.json();
+          if (!response.ok || !savedOrder.success) {
+            throw new Error(
+              savedOrder.error_code ?? "pending_bank_save_failed"
+            );
+          }
+
+          setCheckingCheckoutPayment(false);
+          activeOrderCode = null;
+          currentOrderCodeRef.current = null;
+          setOrderCode(null);
+          checkoutOrderIdRef.current = null;
+          checkoutOrderSnapshotRef.current = null;
+          checkoutPaymentMethodRef.current = "qr";
+          setCart([]);
+          setNote("");
+          setOrderNum((currentOrderNum) => currentOrderNum + 1);
+          refreshOrders();
+          navigate("/orders/waiting for payment", { viewTransition: true });
+        } catch (error) {
+          console.error("Failed to save confirmed Bank order:", error);
+          setCheckingCheckoutPayment(false);
+          toast.error("Không thể lưu đơn chuyển khoản đã xác nhận. Vui lòng thử lại.");
+        } finally {
+          savingBankOrderRef.current = false;
+          releaseOrderCreation();
         }
       };
 
@@ -582,17 +648,21 @@ export default function Pay() {
             await saveAndDisplayCodOrder();
           } else {
             setCheckingCheckoutPayment(true);
+            await saveAndDisplayBankOrder();
           }
           break;
         case -1:
           setCheckingCheckoutPayment(false);
+          releaseOrderCreation();
           // toast.error("Thanh toán thất bại. Vui lòng thử lại.");
           break;
         case -2:
           setCheckingCheckoutPayment(false);
+          releaseOrderCreation();
           break;
         default:
           setCheckingCheckoutPayment(false);
+          releaseOrderCreation();
           console.error("Checkout transaction is invalid:", result);
           // toast.error(result.msg || "Đã xảy ra lỗi, vui lòng thử lại sau.");
           break;
@@ -600,6 +670,7 @@ export default function Pay() {
     } catch (error) {
       console.warn("Failed to check Checkout transaction:", error);
       setCheckingCheckoutPayment(false);
+      releaseOrderCreation();
       // toast.error("Không thể kiểm tra giao dịch. Đang chờ hệ thống xác nhận.");
     }
   }, [
@@ -693,9 +764,14 @@ export default function Pay() {
       <div className="px-4 py-3 flex items-center justify-between">
         <div>
           <div className="text-sm text-subtitle">Hình thức thanh toán</div>
-          <div className="font-medium text-base">{selectedMethodName}</div>
+          <div className="font-medium text-base">{paymentMethodName}</div>
         </div>
-        <Button size="small" variant="secondary" onClick={handleSelectPaymentMethod}>
+        <Button
+          size="small"
+          variant="secondary"
+          onClick={handleSelectPaymentMethod}
+          disabled={reserving || paying || checkingCheckoutPayment}
+        >
           Thay đổi
         </Button>
       </div>
@@ -703,7 +779,7 @@ export default function Pay() {
       <div className="px-4 py-3">
         <Button
           className="w-full"
-          onClick={requestOrderConfirmation}
+          onClick={() => void createOrder()}
           disabled={paying || reserving || checkingCheckoutPayment}
         >
           Xác nhận đặt hàng
@@ -768,26 +844,6 @@ export default function Pay() {
           </div>
         </div>
       )}
-
-      <Modal
-        visible={confirmingOrder}
-        title="Xác nhận đặt hàng"
-        description={`Bạn có chắc muốn đặt hàng với hình thức: ${selectedMethodName}?`}
-        maskClosable={!reserving}
-        onClose={() => setConfirmingOrder(false)}
-        actions={[
-          {
-            text: "Quay lại",
-            close: true,
-            onClick: () => setConfirmingOrder(false),
-          },
-          {
-            text: "Xác nhận",
-            disabled: reserving,
-            onClick: confirmOrder,
-          },
-        ]}
-      />
 
       <Modal
         visible={confirmingClose}

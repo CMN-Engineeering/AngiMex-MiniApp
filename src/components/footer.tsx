@@ -4,14 +4,14 @@ import { useAtomValue } from "jotai";
 import { cartState } from "@/state";
 import TransitionLink from "./transition-link";
 import { useRouteHandle } from "@/hooks";
+import { getConfig } from "@/utils/template";
 import Badge from "./badge";
 import { Button } from "zmp-ui";
 import { openChat } from "zmp-sdk";
-const OAid = "1462569145061879091"
 const openZaloChat = async function () {
   await openChat({
     type: "oa",
-    id: OAid,
+    id: getConfig((config) => config.template.oaIDtoOpenChat),
     message: `Xin chào, tôi cần hỗ trợ!`
   });
 }

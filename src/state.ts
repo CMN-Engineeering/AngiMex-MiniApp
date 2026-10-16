@@ -292,6 +292,14 @@ const allOrdersState = atomWithRefresh(async (get) => {
 
     return data.orders.map((order, index) => {
       const details = order.order_details ?? {};
+      const items: CartItem[] = [];
+      for (const [name, quantity] of Object.entries(details)) {
+        const product = products.find((product) => product.name === name);
+        const normalizedQuantity = Number(quantity);
+        if (product && normalizedQuantity > 0) {
+          items.push({ product, quantity: normalizedQuantity });
+        }
+      }
       const status: OrderStatus =
         order.order_state === "cod" || order.order_state === "pay on delivery"
           ? "cod"
@@ -303,58 +311,56 @@ const allOrdersState = atomWithRefresh(async (get) => {
           ? "confirmed"
           : "completed";
       const paymentStatus: PaymentStatus =
-        order.order_state === "cod" || order.order_state === "pay on delivery"
+        order.payment_method === "COD" ||
+        order.order_state === "cod" ||
+        order.order_state === "pay on delivery"
           ? "cash on delivery"
           : order.order_state === "pending_bank"
           ? "waiting"
           : status === "waiting for payment"
           ? "pending"
           : "success";
+      const location =
+        order.location_latitude !== null &&
+        order.location_latitude !== undefined &&
+        order.location_longitude !== null &&
+        order.location_longitude !== undefined &&
+        Number.isFinite(Number(order.location_latitude)) &&
+        Number.isFinite(Number(order.location_longitude))
+          ? {
+              location: {
+                lat: Number(order.location_latitude),
+                lng: Number(order.location_longitude),
+              },
+            }
+          : {};
+      const delivery: Delivery =
+        order.delivery_type === "pickup"
+          ? {
+              type: "pickup",
+              stationId: Number(order.station_id),
+              stationName: String(order.station_name ?? ""),
+              stationAddress: String(order.shipping_address ?? ""),
+            }
+          : {
+              type: "shipping",
+              detail: order.shipping_address ?? "",
+              name: order.receiver_name ?? "",
+              phone: order.phone_number ?? "",
+              provinceCode: "",
+              provinceName: "",
+              wardCode: "",
+              wardName: "",
+              ...location,
+            };
       return {
         id: order.order_code ?? index,
         status,
         paymentStatus,
         createdAt: new Date(order.created_at),
         receivedAt: new Date(order.created_at),
-        items: Object.entries(details)
-          .map(([name, quantity]) => ({
-            product: products.find((product) => product.name === name),
-            quantity: Number(quantity),
-          }))
-          .filter(
-            (item): item is CartItem =>
-              item.product !== undefined && item.quantity > 0
-          ),
-        delivery: {
-          type: order.delivery_type === "pickup" ? "pickup" : "shipping",
-          ...(order.delivery_type === "pickup"
-            ? {
-                stationId: Number(order.station_id),
-                stationName: String(order.station_name ?? ""),
-                stationAddress: String(order.shipping_address ?? ""),
-              }
-            : {}),
-          detail: order.shipping_address ?? "",
-          name: order.receiver_name ?? "",
-          phone: order.phone_number ?? "",
-          provinceCode: "",
-          provinceName: "",
-          wardCode: "",
-          wardName: "",
-          ...(order.location_latitude !== null &&
-          order.location_latitude !== undefined &&
-          order.location_longitude !== null &&
-          order.location_longitude !== undefined &&
-          Number.isFinite(Number(order.location_latitude)) &&
-          Number.isFinite(Number(order.location_longitude))
-            ? {
-                location: {
-                  lat: Number(order.location_latitude),
-                  lng: Number(order.location_longitude),
-                },
-              }
-            : {}),
-        },
+        items,
+        delivery,
         total: Number(order.amount),
         note: String(order.note ?? "").slice(0, 100),
       };
@@ -367,6 +373,13 @@ export const ordersState = atomFamily((status: OrderStatus) =>
     return orders.filter((order) => order.status === status);
   })
 );
+
+export const ordersAwaitingConfirmationState = atom(async (get) => {
+  const orders = await get(allOrdersState);
+  return orders.filter(
+    (order) => order.status === "cod" || order.status === "confirmed"
+  );
+});
 
 export const refreshOrdersState = allOrdersState;
 

@@ -23,6 +23,14 @@ function OrderSummary(props: {
   full?: boolean;
   showCancel?: boolean;
 }) {
+  const orderStatusLabel =
+    props.order.status === "waiting for payment"
+      ? "Chờ thanh toán"
+      : props.order.status === "cod"
+      ? "Chờ xác nhận"
+      : props.order.status === "confirmed"
+      ? "Chờ giao hàng"
+      : "Giao thành công";
   const navigate = useNavigate();
   const refreshOrders = useSetAtom(refreshOrdersState);
   const [deleting, setDeleting] = useState(false);
@@ -56,9 +64,7 @@ function OrderSummary(props: {
       if (result.resultCode !== 1) {
         activeCheckoutRef.current = false;
         setCreatingPayment(false);
-        if (result.resultCode === 0) {
-          toast("Thanh toán chưa hoàn tất. Đơn hàng vẫn đang chờ thanh toán.");
-        } else if (result.resultCode === -1) {
+        if (result.resultCode === -1) {
           toast.error("Thanh toán thất bại. Vui lòng thử lại.");
         }
         return;
@@ -86,7 +92,7 @@ function OrderSummary(props: {
       activeCheckoutRef.current = false;
       setCreatingPayment(false);
       refreshOrders();
-      navigate("/orders/confirmed", { viewTransition: true });
+      navigate("/orders/cod", { viewTransition: true });
       toast.success("Thanh toán thành công. Đơn hàng đã được xác nhận!", {
         icon: "🎉",
       });
@@ -200,9 +206,7 @@ function OrderSummary(props: {
       title={
         
         <div className="w-full flex justify-between items-center space-x-2 font-normal">
-          {/* <span className="text-xs truncate bold">
-            Trạng thái giao dịch:
-          </span> */}
+          <span className="text-xs text-subtitle">{orderStatusLabel}</span>
           <span style={{marginLeft:'auto'}}
             className={`text-xs ${
               props.order.paymentStatus === "pending" ||

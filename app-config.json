@@ -8,14 +8,14 @@
     "hideAndroidBottomNavigationBar": false,
     "hideIOSSafeAreaBottom": true,
     "selfControlLoading": false
-  },
+  }, 
   "listCSS": [],
   "listSyncJS": [],
   "listAsyncJS": [],
   "template": {
     "name": "zaui-market",
     "apiUrl": "",
-    "oaIDtoOpenChat": "4318657068771012646",
+    "oaIDtoOpenChat": "431911749450013112",
     "logoUrl": "https://angimex.com.vn/uploads/qcs/angimex-removebg-preview-png-20210623174844OPCB8TN7ag.png",
     "shopName": "AngiMex Food",
     "shopAddress": ""
