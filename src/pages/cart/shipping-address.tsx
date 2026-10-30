@@ -10,23 +10,29 @@ import { formatShippingAddress } from "@/utils/format";
 import { useAtom, useAtomValue } from "jotai";
 import { useResetAtom } from "jotai/utils";
 import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Button, Icon, Input } from "zmp-ui";
 import { useSetAtom } from "jotai";
-import province_data from "./data/province_data.json"
-import commune_data from "./data/commune_data.json"
 
-// Cas AddressKit - danh mục hành chính Việt Nam
-// https://cas.so/address-kit
-const ADDRESS_API_ENDPOINT = "https://production.cas.so/address-kit";
-// Cấu trúc hành chính 2 cấp (Tỉnh/Thành - Xã/Phường), áp dụng từ 01/07/2025
-const ADDRESS_EFFECTIVE_DATE = "2025-07-01";
+const VIETMAP_API_KEY = "8c6fbde67c7fb21a7aa851a3c59d22d5c620ed5ec4d4ef4d";
+const VIETMAP_AUTOCOMPLETE_ENDPOINT =
+  "https://maps.vietmap.vn/api/autocomplete/v4";
 
-interface AddressOption {
-  code: string;
+interface VietmapSuggestion {
+  display: string;
   name: string;
+}
+
+function isVietmapSuggestion(result: unknown): result is VietmapSuggestion {
+  if (typeof result !== "object" || result === null) return false;
+
+  const suggestion = result as Record<string, unknown>;
+  return (
+    typeof suggestion.display === "string" &&
+    typeof suggestion.name === "string" &&
+    suggestion.name.trim().length > 0
+  );
 }
 
 async function geocodeAddress(address: string): Promise<Location> {
@@ -65,145 +71,6 @@ async function geocodeAddress(address: string): Promise<Location> {
   return { lat: latitude, lng: longitude };
 }
 
-// Bỏ dấu tiếng Việt để tìm kiếm không phân biệt có dấu/không dấu
-function normalizeSearchText(str: string) {
-  return str
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/đ/gi, "d")
-    .toLowerCase()
-    .trim();
-}
-
-interface SearchableSelectProps {
-  label: string;
-  placeholder: string;
-  value: string;
-  options: AddressOption[];
-  disabled?: boolean;
-  loading?: boolean;
-  onChange: (code: string) => void;
-}
-
-function SearchableSelect({
-  label,
-  placeholder,
-  value,
-  options,
-  disabled,
-  loading,
-  onChange,
-}: SearchableSelectProps) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-
-  const selected = options.find((o) => o.code === value);
-
-  useEffect(() => {
-    if (!open) setQuery("");
-  }, [open]);
-
-  useEffect(() => {
-    if (disabled) setOpen(false);
-  }, [disabled]);
-
-  const normalizedQuery = normalizeSearchText(query);
-  const filtered = normalizedQuery
-    ? options.filter((o) =>
-        normalizeSearchText(o.name).includes(normalizedQuery)
-      )
-    : options;
-
-  return (
-    <div className="grid gap-1">
-      <label className="text-sm font-medium">{label}</label>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen(true)}
-        className="w-full h-10 px-3 rounded-lg border border-gray-300 bg-white text-sm text-left disabled:opacity-50 flex items-center justify-between gap-2"
-      >
-        <span
-          className={`truncate ${selected ? "text-black" : "text-gray-400"}`}
-        >
-          {loading ? "Đang tải..." : selected ? selected.name : placeholder}
-        </span>
-        <svg width="12" height="12" viewBox="0 0 12 12" className="shrink-0">
-          <path
-            d="M2 4l4 4 4-4"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            fill="none"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </button>
-
-      {/* Bảng chọn hiển thị toàn màn hình, tách biệt hoàn toàn khỏi form phía sau */}
-      {open &&
-        createPortal(
-          <div className="fixed inset-0 z-50 bg-white flex flex-col">
-            <div className="flex items-center gap-3 px-3 py-3 border-b border-gray-200 shrink-0">
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                aria-label="Đóng"
-                className="p-1 -ml-1 text-gray-600"
-              >
-                <svg width="20" height="20" viewBox="0 0 20 20">
-                  <path
-                    d="M15 5L5 15M5 5l10 10"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    fill="none"
-                    strokeLinecap="round"
-                  />
-                </svg>
-              </button>
-              <span className="text-base font-medium">{label}</span>
-            </div>
-
-            <div className="px-3 py-3 border-b border-gray-200 shrink-0">
-              <input
-                autoFocus
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Tìm kiếm..."
-                className="w-full h-10 px-3 rounded-lg border border-gray-300 text-sm outline-none"
-              />
-            </div>
-
-            <div className="flex-1 overflow-y-auto">
-              {filtered.length === 0 && (
-                <div className="px-4 py-6 text-sm text-gray-400 text-center">
-                  Không tìm thấy kết quả
-                </div>
-              )}
-              {filtered.map((o) => (
-                <div
-                  key={o.code}
-                  onClick={() => {
-                    onChange(o.code);
-                    setOpen(false);
-                  }}
-                  className={`px-4 py-3 text-sm cursor-pointer border-b border-gray-100 ${
-                    o.code === value
-                      ? "bg-blue-50 text-blue-600 font-medium"
-                      : ""
-                  }`}
-                >
-                  {o.name}
-                </div>
-              ))}
-            </div>
-          </div>,
-          document.body
-        )}
-    </div>
-  );
-}
-
 function ShippingAddressPage() {
   const { state } = useLocation();
   const editingOrder = (state as { order?: Order } | null)?.order;
@@ -213,28 +80,95 @@ function ShippingAddressPage() {
   const refreshOrders = useSetAtom(refreshOrdersState);
   const navigate = useNavigate();
 
-  const [provinces, setProvinces] = useState<AddressOption[]>([]);
-  const [wards, setWards] = useState<AddressOption[]>([]);
-  const [loadingProvinces, setLoadingProvinces] = useState(false);
-  const [loadingWards, setLoadingWards] = useState(false);
-
   const initialAddress = editingOrder?.delivery.type === "shipping"
     ? editingOrder.delivery
     : address;
-  const [provinceCode, setProvinceCode] = useState(
-    initialAddress?.provinceCode ?? ""
+  const [detail, setDetail] = useState(
+    initialAddress ? formatShippingAddress(initialAddress) : ""
   );
-  const [wardCode, setWardCode] = useState(initialAddress?.wardCode ?? "");
-  const [detail, setDetail] = useState(initialAddress?.detail ?? "");
   const [recipientName, setRecipientName] = useState(
     initialAddress?.name || userInfo?.name || ""
   );
   const [recipientPhone, setRecipientPhone] = useState(
     initialAddress?.phone || userInfo?.phone || ""
   );
+  const [autocompleteOpen, setAutocompleteOpen] = useState(false);
+  const [addressSuggestions, setAddressSuggestions] = useState<
+    VietmapSuggestion[]
+  >([]);
+  const [loadingAddressSuggestions, setLoadingAddressSuggestions] =
+    useState(false);
+  const [addressSuggestionError, setAddressSuggestionError] = useState("");
   const [geocodingAddress, setGeocodingAddress] = useState(false);
   const [savingOrder, setSavingOrder] = useState(false);
   const [loadingContactInfo, setLoadingContactInfo] = useState(false);
+
+  useEffect(() => {
+    const query = detail.trim();
+    if (!autocompleteOpen || query.length < 2) {
+      setAddressSuggestions([]);
+      setLoadingAddressSuggestions(false);
+      setAddressSuggestionError("");
+      return;
+    }
+
+    setAddressSuggestions([]);
+    setLoadingAddressSuggestions(true);
+    setAddressSuggestionError("");
+
+    if (!VIETMAP_API_KEY) {
+      setAddressSuggestions([]);
+      setLoadingAddressSuggestions(false);
+      setAddressSuggestionError(
+        "Chưa cấu hình Vietmap. Vui lòng liên hệ hỗ trợ."
+      );
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      setLoadingAddressSuggestions(true);
+      setAddressSuggestionError("");
+
+      try {
+        const url = new URL(VIETMAP_AUTOCOMPLETE_ENDPOINT);
+        url.searchParams.set("apikey", VIETMAP_API_KEY);
+        url.searchParams.set("text", query);
+        url.searchParams.set("display_type", "3");
+        url.searchParams.set("layers", "ADDRESS");
+
+        const response = await fetch(url.toString(), {
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`vietmap_autocomplete_failed_${response.status}`);
+        }
+
+        const results: unknown = await response.json();
+        if (!Array.isArray(results)) {
+          throw new Error("vietmap_autocomplete_invalid_response");
+        }
+
+        setAddressSuggestions(results.filter(isVietmapSuggestion));
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") return;
+        console.warn("Failed to load Vietmap address suggestions:", error);
+        setAddressSuggestions([]);
+        setAddressSuggestionError(
+          "Không thể tải gợi ý địa chỉ. Vui lòng thử lại."
+        );
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoadingAddressSuggestions(false);
+        }
+      }
+    }, 350);
+
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [detail, autocompleteOpen]);
 
   const handleGetContactInfo = async () => {
     if (loadingContactInfo) return;
@@ -253,78 +187,22 @@ function ShippingAddressPage() {
     }
   };
 
-  // Tải danh sách tỉnh/thành khi vào trang
-  useEffect(() => {
-    let ignore = false;
-    (async () => {
-      setLoadingProvinces(true);
-      try {
- 
-        if (!ignore) setProvinces(province_data.provinces ?? []);
-      } catch (err) {
-        if (!ignore) toast.error("Không tải được danh sách tỉnh/thành");
-      } finally {
-        if (!ignore) setLoadingProvinces(false);
-      }
-    })();
-    return () => {
-      ignore = true;
-    };
-  }, []);
-
-  // Tải danh sách xã/phường mỗi khi tỉnh/thành thay đổi
-  useEffect(() => {
-    if (!provinceCode) {
-      setWards([]);
-      return;
-    }
-    
-    let ignore = false;
-    
-    setLoadingWards(true);
-    try {
-      // Lọc danh sách xã/phường theo mã tỉnh/thành
-      const filteredCommunes = commune_data.communes.filter(
-        (commune) => commune.provinceCode === provinceCode
-      );
-
-      // Sắp xếp theo tên để hiển thị đẹp hơn trên UI
-      const sortedCommunes = filteredCommunes.sort((a, b) => 
-        a.name.localeCompare(b.name)
-      );
-
-      if (!ignore) setWards(sortedCommunes);
-    } catch (err) {
-      if (!ignore) toast.error("Không tải được danh sách xã/phường");
-    } finally {
-      if (!ignore) setLoadingWards(false);
-    }
-    
-    return () => {
-      ignore = true;
-    };
-  }, [provinceCode]);
   return (
     <form
       className="h-full flex flex-col justify-between"
       onSubmit={async (e) => {
         e.preventDefault();
 
-        if (!provinceCode || !wardCode || !detail.trim()) {
-          toast.error(
-            "Vui lòng chọn tỉnh/thành, xã/phường và nhập số nhà, tên đường"
-          );
+        if (!detail.trim()) {
+          toast.error("Vui lòng nhập địa chỉ giao hàng");
           return;
         }
 
-        const province = provinces.find((p) => p.code === provinceCode);
-        const ward = wards.find((w) => w.code === wardCode);
-
         const addressDetails: ShippingAddress = {
-          provinceCode,
-          provinceName: province?.name ?? "",
-          wardCode,
-          wardName: ward?.name ?? "",
+          provinceCode: "",
+          provinceName: "",
+          wardCode: "",
+          wardName: "",
           detail: detail.trim(),
           name: recipientName.trim(),
           phone: recipientPhone.trim(),
@@ -343,7 +221,7 @@ function ShippingAddressPage() {
               : error instanceof Error &&
                 error.message === "locationiq_address_not_found"
               ? "Không tìm thấy tọa độ địa chỉ. Vui lòng kiểm tra lại địa chỉ."
-              : "Không thể tra cứu tọa độ địa chỉ. Vui lòng thử lại sau."
+              : "Không thể tra cứu tọa độ địa chỉ. Vui lòng thử lại hoặc liên hệ hỗ trợ để được tư vấn."
           );
           return;
         } finally {
@@ -405,36 +283,65 @@ function ShippingAddressPage() {
       <div className="py-2 space-y-2">
 
         <div className="bg-section p-4 grid gap-4" id="address-form">
-          <SearchableSelect
-            label="Tỉnh/Thành phố"
-            placeholder="-- Chọn tỉnh/thành --"
-            value={provinceCode}
-            options={provinces}
-            loading={loadingProvinces}
-            onChange={(code) => {
-              setProvinceCode(code);
-              setWardCode("");
-            }}
-          />
-
-          <SearchableSelect
-            label="Xã/Phường"
-            placeholder="-- Chọn xã/phường --"
-            value={wardCode}
-            options={wards}
-            disabled={!provinceCode}
-            loading={loadingWards}
-            onChange={setWardCode}
-          />
-
-          <Input
-            name="detail"
-            label="Số nhà, tên đường"
-            placeholder="Số nhà, tên đường..."
-            value={detail}
-            required
-            onChange={(e) => setDetail(e.target.value)}
-          />
+          <div className="relative">
+            <Input
+              name="detail"
+              label="Địa chỉ chi tiết"
+              placeholder="Số nhà, tên đường..."
+              value={detail}
+              required
+              onFocus={() => setAutocompleteOpen(true)}
+              onBlur={() => setAutocompleteOpen(false)}
+              onChange={(e) => {
+                setDetail(e.target.value);
+                setAutocompleteOpen(true);
+              }}
+            />
+            {autocompleteOpen && detail.trim().length >= 2 && (
+              <div
+                className="absolute inset-x-0 top-full z-20 max-h-60 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg"
+                role="listbox"
+                aria-label="Gợi ý địa chỉ"
+              >
+                {loadingAddressSuggestions && (
+                  <div className="px-3 py-2 text-sm text-gray-500">
+                    Đang tìm địa chỉ...
+                  </div>
+                )}
+                {!loadingAddressSuggestions && addressSuggestionError && (
+                  <div className="px-3 py-2 text-sm text-red-600">
+                    {addressSuggestionError}
+                  </div>
+                )}
+                {!loadingAddressSuggestions &&
+                  !addressSuggestionError &&
+                  addressSuggestions.map((suggestion, index) => (
+                    <button
+                      key={`${suggestion.name}-${index}`}
+                      type="button"
+                      role="option"
+                      aria-selected="false"
+                      className="block w-full border-b border-gray-100 px-3 py-2 text-left text-sm last:border-b-0"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        setDetail(suggestion.display.trim());
+                        setAddressSuggestions([]);
+                        setAutocompleteOpen(false);
+                      }}
+                    >
+                      {suggestion.display}
+                    </button>
+                  ))}
+                {!loadingAddressSuggestions &&
+                  !addressSuggestionError &&
+                  addressSuggestions.length === 0 && (
+                    <div className="px-3 py-2 text-sm text-gray-500">
+                      Không tìm thấy gợi ý địa chỉ.
+                    </div>
+                  )}
+              </div>
+            )}
+          </div>
         </div>
         <div className="bg-section p-4 grid gap-4">
           <Input

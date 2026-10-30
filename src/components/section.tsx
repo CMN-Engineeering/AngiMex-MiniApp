@@ -13,7 +13,12 @@ export default function Section(props: PropsWithChildren<SectionProps>) {
       onClick={props.onClick}
     >
       <div className="flex items-center justify-between px-2">
-        <div className="text-sm font-medium truncate p-2 pt-3 w-full">
+        <div className="text-sm font-medium truncate p-2 pt-3 w-full"
+        style = {{
+          fontWeight:"bold",
+          fontSize:"15px",
+          color:"green"
+        }}>
           {props.title}
         </div>
       </div>

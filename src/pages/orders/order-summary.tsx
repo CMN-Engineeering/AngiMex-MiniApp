@@ -12,9 +12,6 @@ import { backendRequest, getCurrentUserId } from "@/utils/backend";
 import { useSetAtom } from "jotai";
 import { refreshOrdersState } from "@/state";
 import { CheckoutSDK, events, EventName } from "zmp-sdk/apis";
-const today = new Date()
-const tomorrow = new Date(today)
-tomorrow.setDate(tomorrow.getDate() + 1)
 const GET_MAC_URL = "https://cmnes.com:4488/get_mac";
 const CHECKOUT_ORDER_LINK_URL = "https://cmnes.com:4488/checkout_order_link";
 const CONFIRM_CHECKOUT_PAYMENT_URL = "https://cmnes.com:4488/confirm_checkout_payment";
@@ -23,14 +20,6 @@ function OrderSummary(props: {
   full?: boolean;
   showCancel?: boolean;
 }) {
-  const orderStatusLabel =
-    props.order.status === "waiting for payment"
-      ? "Chờ thanh toán"
-      : props.order.status === "cod"
-      ? "Chờ xác nhận"
-      : props.order.status === "confirmed"
-      ? "Chờ giao hàng"
-      : "Giao thành công";
   const navigate = useNavigate();
   const refreshOrders = useSetAtom(refreshOrdersState);
   const [deleting, setDeleting] = useState(false);
@@ -204,27 +193,38 @@ function OrderSummary(props: {
   return (
     <Section
       title={
-        
-        <div className="w-full flex justify-between items-center space-x-2 font-normal">
-          <span className="text-xs text-subtitle">{orderStatusLabel}</span>
-          <span style={{marginLeft:'auto'}}
-            className={`text-xs ${
+        <div className="flex w-full items-center justify-between gap-2 font-normal">
+          <time
+            className="truncate text-xs text-subtitle"
+            dateTime={
+              Number.isNaN(props.order.createdAt.getTime())
+                ? undefined
+                : props.order.createdAt.toISOString()
+            }
+          >
+            {props.order.createdAt.toLocaleDateString("vi-VN")}
+          </time>
+          <span
+            className={`shrink-0 text-right text-xs ${
               props.order.paymentStatus === "pending" ||
               props.order.paymentStatus === "waiting"
                 ? "text-danger"
                 : "text-primary"
             }`}
           >
-            {props.order.paymentStatus === "cash on delivery"
-              ? "Thanh toán khi nhận hàng"
+            {props.order.status === "confirmed"
+              ? "Đang vận chuyển"
+              : props.order.status === "completed"
+              ? "Giao thành công"
+              : props.order.paymentStatus === "cash on delivery"
+              ? "Chờ xác nhận"
               : {
                   waiting: "Chờ thanh toán",
-                  pending: `Cần thanh toán trước ngày ${tomorrow.getDate()}/${tomorrow.getMonth()}/${tomorrow.getFullYear()}`,
+                  pending: "Chờ thanh toán",
                   success: "Đã thanh toán",
                   failed: "Thanh toán thất bại",
                 }[props.order.paymentStatus]}
           </span>
-          
         </div>
       }
       className="flex-1 overflow-y-auto rounded-lg"
@@ -281,7 +281,6 @@ function OrderSummary(props: {
                   color: "white",
                 }}
                 variant="tertiary"
-                prefixIcon={<Icon icon="zi-delete" />}
                 onClick={(event) => {
                   event.stopPropagation();
                   setConfirmingDelete(true);

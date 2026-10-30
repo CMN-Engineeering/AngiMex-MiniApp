@@ -177,7 +177,9 @@ export const allProductsState = atom(async (get) => {
 
 export const productsState = atom(async (get) => {
   const products = await get(allProductsState);
-  return products.filter((product) => product.isHidden !== true);
+  return products
+    .filter((product) => product.isHidden !== true)
+    .sort((a, b) => Number(b.stock > 0) - Number(a.stock > 0));
 });
 
 export const flashSaleProductsState = atom((get) => get(productsState));
@@ -377,7 +379,7 @@ export const ordersState = atomFamily((status: OrderStatus) =>
 export const ordersAwaitingConfirmationState = atom(async (get) => {
   const orders = await get(allOrdersState);
   return orders.filter(
-    (order) => order.status === "cod" || order.status === "confirmed"
+    (order) => order.status === "waiting for payment" || order.status === "cod"
   );
 });
 

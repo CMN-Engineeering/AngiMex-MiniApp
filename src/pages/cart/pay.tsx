@@ -37,6 +37,24 @@ let activeOrderCode: string | null = null;
 let activeOrderCodeRequest: Promise<string> | null = null;
 let selectedPaymentMethod: "qr" | "cod" = "qr";
 let selectedPaymentMethodName = "Chuyển khoản ngân hàng";
+type CheckoutOrderSnapshot = {
+  order_code: string;
+  amount: number;
+  order_amount: number;
+  shipping_fee: number;
+  total_amount: number;
+  shipping_address: string;
+  location_latitude: number | null;
+  location_longitude: number | null;
+  receiver_name: string;
+  phone_number: string;
+  note: string;
+  user_id: string;
+  order: Record<string, number>;
+};
+let activeCheckoutOrderId: string | null = null;
+let activeCheckoutPaymentMethod: "qr" | "cod" = "qr";
+let activeCheckoutOrderSnapshot: CheckoutOrderSnapshot | null = null;
 
 // order_not_found just means the transfer hasn't arrived yet, not a real error.
 const SILENT_PAYMENT_ERROR_CODES = new Set(["order_not_found"]);
@@ -116,23 +134,6 @@ export default function Pay() {
   const currentOrderCodeRef = useRef<string | null>(activeOrderCode);
   const lastErrorCodeRef = useRef<string | undefined>(undefined);
   const finalizedOrderCodeRef = useRef<string | null>(null);
-  const checkoutOrderIdRef = useRef<string | null>(null);
-  const checkoutPaymentMethodRef = useRef<"qr" | "cod">("qr");
-  const checkoutOrderSnapshotRef = useRef<{
-    order_code: string;
-    amount: number;
-    order_amount: number;
-    shipping_fee: number;
-    total_amount: number;
-    shipping_address: string;
-    location_latitude: number | null;
-    location_longitude: number | null;
-    receiver_name: string;
-    phone_number: string;
-    note: string;
-    user_id: string;
-    order: Record<string, number>;
-  } | null>(null);
   const savingCodOrderRef = useRef(false);
   const savingBankOrderRef = useRef(false);
 
@@ -344,7 +345,7 @@ export default function Pay() {
       }
       currentOrderCodeRef.current = currentOrderCode;
       setOrderCode(currentOrderCode);
-      checkoutPaymentMethodRef.current = paymentMethod;
+      activeCheckoutPaymentMethod = paymentMethod;
 
       const userID = await getCurrentUserId();
       const orderBreakdown: Record<string, number> = {};
@@ -368,7 +369,8 @@ export default function Pay() {
         user_id: userID,
         order: orderBreakdown,
       };
-      checkoutOrderSnapshotRef.current = orderSnapshot;
+      activeCheckoutOrderSnapshot = orderSnapshot;
+      activeCheckoutOrderId = null;
 
       const items = cart.map((cartItem) => ({
         id: String(cartItem.product.id),
@@ -396,7 +398,7 @@ export default function Pay() {
         mac: String(mac),
         success: async (data) => {
           try {
-            checkoutOrderIdRef.current = String(data.orderId);
+            activeCheckoutOrderId = String(data.orderId);
             if (paymentMethod === "qr") {
               return;
             }
@@ -453,9 +455,9 @@ export default function Pay() {
     activeOrderCode = null;
     currentOrderCodeRef.current = null;
     setOrderCode(null);
-    checkoutOrderIdRef.current = null;
-    checkoutOrderSnapshotRef.current = null;
-    checkoutPaymentMethodRef.current = "qr";
+    activeCheckoutOrderId = null;
+    activeCheckoutOrderSnapshot = null;
+    activeCheckoutPaymentMethod = "qr";
     refreshOrders();
     navigate("/orders/waiting for payment", { viewTransition: true });
   };
@@ -489,8 +491,9 @@ export default function Pay() {
       activeOrderCode = null;
       currentOrderCodeRef.current = null;
       setOrderCode(null);
-      checkoutOrderIdRef.current = null;
-      checkoutPaymentMethodRef.current = "qr";
+      activeCheckoutOrderId = null;
+      activeCheckoutOrderSnapshot = null;
+      activeCheckoutPaymentMethod = "qr";
       setCart([]);
       setNote("");
       setOrderNum((currentOrderNum) => currentOrderNum + 1);
@@ -532,18 +535,23 @@ export default function Pay() {
       console.log("Got resulte code : ", result);
       const saveAndDisplayCodOrder = async () => {
         const completedOrderCode = currentOrderCodeRef.current;
-        const checkoutOrderId = checkoutOrderIdRef.current;
-        if (!completedOrderCode || !checkoutOrderId) {
+        const checkoutOrderId = activeCheckoutOrderId;
+        if (!completedOrderCode) {
           setCheckingCheckoutPayment(false);
           releaseOrderCreation();
-          // toast.error("Không tìm thấy thông tin đơn hàng Checkout. Vui lòng thử lại.");
+          return;
+        }
+        if (!checkoutOrderId) {
+          setCheckingCheckoutPayment(false);
+          releaseOrderCreation();
+          toast.error("Không tìm thấy thông tin đơn hàng. Vui lòng thử lại.");
           return;
         }
         if (savingCodOrderRef.current) return;
 
         savingCodOrderRef.current = true;
         try {
-          const orderSnapshot = checkoutOrderSnapshotRef.current;
+          const orderSnapshot = activeCheckoutOrderSnapshot;
           if (!orderSnapshot || orderSnapshot.order_code !== completedOrderCode) {
             throw new Error("cod_order_snapshot_not_found");
           }
@@ -575,16 +583,18 @@ export default function Pay() {
 
       const saveAndDisplayBankOrder = async () => {
         const completedOrderCode = currentOrderCodeRef.current;
-        const orderSnapshot = checkoutOrderSnapshotRef.current;
+        const orderSnapshot = activeCheckoutOrderSnapshot;
         if (
           !completedOrderCode ||
           !orderSnapshot ||
           orderSnapshot.order_code !== completedOrderCode ||
-          !checkoutOrderIdRef.current
+          !activeCheckoutOrderId
         ) {
           setCheckingCheckoutPayment(false);
           releaseOrderCreation();
-          toast.error("Không tìm thấy thông tin đơn hàng. Vui lòng thử lại.");
+          if (completedOrderCode) {
+            toast.error("Không tìm thấy thông tin đơn hàng. Vui lòng thử lại.");
+          }
           return;
         }
         if (savingBankOrderRef.current) return;
@@ -596,7 +606,7 @@ export default function Pay() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               order_code: completedOrderCode,
-              checkout_order_id: checkoutOrderIdRef.current,
+              checkout_order_id: activeCheckoutOrderId,
               method: "BANK",
             }),
           });
@@ -623,9 +633,9 @@ export default function Pay() {
           activeOrderCode = null;
           currentOrderCodeRef.current = null;
           setOrderCode(null);
-          checkoutOrderIdRef.current = null;
-          checkoutOrderSnapshotRef.current = null;
-          checkoutPaymentMethodRef.current = "qr";
+          activeCheckoutOrderId = null;
+          activeCheckoutOrderSnapshot = null;
+          activeCheckoutPaymentMethod = "qr";
           setCart([]);
           setNote("");
           setOrderNum((currentOrderNum) => currentOrderNum + 1);
@@ -644,7 +654,7 @@ export default function Pay() {
       switch (result.resultCode) {
         case 1:
         case 0:
-          if (checkoutPaymentMethodRef.current === "cod") {
+          if (activeCheckoutPaymentMethod === "cod") {
             await saveAndDisplayCodOrder();
           } else {
             setCheckingCheckoutPayment(true);

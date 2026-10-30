@@ -15,6 +15,13 @@ export default function ProductGrid({
   showAddToCart,
   ...props
 }: ProductGridProps) {
+  const inStockProducts = products.filter(
+    (product) => Number(product.stock) > 0
+  );
+  const outOfStockProducts = products.filter(
+    (product) => !(Number(product.stock) > 0)
+  );
+
   return (
     <div
       className={"grid grid-cols-2 px-4 pt-2 pb-8 gap-4 ".concat(
@@ -22,7 +29,25 @@ export default function ProductGrid({
       )}
       {...props}
     >
-      {products.map((product) => (
+      {inStockProducts.map((product) => (
+        <ProductItem
+          key={product.id}
+          product={product}
+          replace={replace}
+          showAddToCart={showAddToCart}
+        />
+      ))}
+      {outOfStockProducts.length > 0 && (
+        <div className="col-span-2 pt-2 font-semibold text-subtitle"
+        style={{
+          fontWeight:"bold",
+          fontSize:"15px",
+          color:"red"
+        }}>
+          Sản phẩm đã hết hàng
+        </div>
+      )}
+      {outOfStockProducts.map((product) => (
         <ProductItem
           key={product.id}
           product={product}
