@@ -4,12 +4,11 @@ import { useMemo } from "react";
 import {
   cartTotalState,
   deliveryModeState,
-  selectedStationState,
+  stationsState,
   shippingAddressState,
 } from "@/state";
 import { formatPrice } from "@/utils/format";
-import { calculateDistance } from "@/utils/location";
-import { calculateShippingFee } from "@/utils/shipping";
+import { getCheapestShippingStation } from "@/utils/shipping";
 import Section from "@/components/section";
 import HorizontalDivider from "@/components/horizontal-divider";
 
@@ -17,24 +16,20 @@ export default function CartSummary() {
   const { totalAmount } = useAtomValue(cartTotalState);
   const deliveryMode = useAtomValue(deliveryModeState);
   const shippingAddress = useAtomValue(shippingAddressState);
-  const selectedStation = useAtomValue(
-    useMemo(() => loadable(selectedStationState), [])
+  const stations = useAtomValue(
+    useMemo(() => loadable(stationsState), [])
   );
+  const shippingStation =
+    deliveryMode === "shipping" &&
+    shippingAddress?.location &&
+    stations.state === "hasData" &&
+    stations.data.length > 0
+      ? getCheapestShippingStation(stations.data, shippingAddress.location)
+      : null;
   const shippingFee =
     deliveryMode === "pickup"
       ? 0
-      : shippingAddress?.location &&
-        selectedStation.state === "hasData" &&
-        selectedStation.data
-      ? calculateShippingFee(
-          calculateDistance(
-            selectedStation.data.location.lat,
-            selectedStation.data.location.lng,
-            shippingAddress.location.lat,
-            shippingAddress.location.lng
-          )
-        )
-      : null;
+      : shippingStation?.fee ?? null;
 
   return (
     <Section title="Thanh toán" className="rounded-lg">
@@ -46,7 +41,14 @@ export default function CartSummary() {
               <td>{formatPrice(totalAmount)}</td>
             </tr>
             <tr>
-              <th>Phí vận chuyển</th>
+              <th>
+                <div>Phí vận chuyển</div>
+                {deliveryMode === "shipping" && shippingStation && (
+                  <div className="text-xs text-inactive">
+                    Vận chuyển từ {shippingStation.station.name}
+                  </div>
+                )}
+              </th>
               <td>
                 {shippingFee === null
                   ? "Nhập địa chỉ để tính"

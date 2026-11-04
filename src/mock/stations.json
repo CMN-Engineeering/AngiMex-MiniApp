@@ -3,10 +3,30 @@
     "id": 1,
     "name": "Chi nhánh Bến Thành",
     "image": "https://angimexfood.com/uploads/qcs/logo-png-202107151954519r1TR9H8PN.png",
-    "address": "373 Nguyễn Công Trứ, Phường Bến Thành, Thành phố Hồ Chí Minh, Việt Nam",
+    "address": "373 Nguyễn Công Trứ, Phường Bến Thành, Thành phố Hồ Chí Minh",
     "location": {
       "lat": 10.765511033188634,
       "lng": 106.69793612194364
+    }
+  },
+  {
+    "id": 2,
+    "name": "Chi nhánh 2",
+    "image": "https://angimexfood.com/uploads/qcs/logo-png-202107151954519r1TR9H8PN.png",
+    "address": "7/6C Ấp 3, Xã Hóc Môn, Thành phố Hồ Chí Minh",
+    "location": {
+      "lat": 10.870839, 
+      "lng": 106.598432
+    }
+  },
+    {
+    "id": 3,
+    "name": "Chi nhánh 3",
+    "image": "https://angimexfood.com/uploads/qcs/logo-png-202107151954519r1TR9H8PN.png",
+    "address": "Quốc lộ 91, K. Thạnh An, P. Mỹ Thới, An Giang",
+    "location": {
+      "lat": 10.358067,
+      "lng": 105.458248
     }
   }
 ]

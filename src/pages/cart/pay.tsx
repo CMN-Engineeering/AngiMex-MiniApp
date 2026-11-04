@@ -11,12 +11,12 @@ import {
   orderNumState,
   refreshOrdersState,
   selectedStationState,
+  stationsState,
   shippingAddressState,
   userInfoState,
 } from "@/state";
 import { formatPrice, formatShippingAddress } from "@/utils/format";
-import { calculateDistance } from "@/utils/location";
-import { calculateShippingFee } from "@/utils/shipping";
+import { getCheapestShippingStation } from "@/utils/shipping";
 import { Button, Modal } from "zmp-ui";
 import toast from "react-hot-toast";
 import { useNavigate } from "react-router-dom";
@@ -55,6 +55,7 @@ type CheckoutOrderSnapshot = {
 let activeCheckoutOrderId: string | null = null;
 let activeCheckoutPaymentMethod: "qr" | "cod" = "qr";
 let activeCheckoutOrderSnapshot: CheckoutOrderSnapshot | null = null;
+let activeCheckoutOrderLink: Promise<void> | null = null;
 
 // order_not_found just means the transfer hasn't arrived yet, not a real error.
 const SILENT_PAYMENT_ERROR_CODES = new Set(["order_not_found"]);
@@ -142,22 +143,21 @@ export default function Pay() {
   const selectedStation = useAtomValue(
     useMemo(() => loadable(selectedStationState), [])
   );
+  const stations = useAtomValue(
+    useMemo(() => loadable(stationsState), [])
+  );
   const userInfo = useAtomValue(useMemo(() => loadable(userInfoState), []));
+  const shippingStation =
+    deliveryMode === "shipping" &&
+    shippingAddress?.location &&
+    stations.state === "hasData" &&
+    stations.data.length > 0
+      ? getCheapestShippingStation(stations.data, shippingAddress.location)
+      : null;
   const shippingFee =
     deliveryMode === "pickup"
       ? 0
-      : shippingAddress?.location &&
-        selectedStation.state === "hasData" &&
-        selectedStation.data
-      ? calculateShippingFee(
-          calculateDistance(
-            selectedStation.data.location.lat,
-            selectedStation.data.location.lng,
-            shippingAddress.location.lat,
-            shippingAddress.location.lng
-          )
-        )
-      : null;
+      : shippingStation?.fee ?? null;
   const totalAmount = subtotal + (shippingFee ?? 0);
 
   const shippingAddressText =
@@ -346,6 +346,7 @@ export default function Pay() {
       currentOrderCodeRef.current = currentOrderCode;
       setOrderCode(currentOrderCode);
       activeCheckoutPaymentMethod = paymentMethod;
+      activeCheckoutOrderLink = null;
 
       const userID = await getCurrentUserId();
       const orderBreakdown: Record<string, number> = {};
@@ -403,7 +404,7 @@ export default function Pay() {
               return;
             }
 
-            const linkResponse = await fetch(CHECKOUT_ORDER_LINK_URL, {
+            const linkOrder = fetch(CHECKOUT_ORDER_LINK_URL, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -411,13 +412,16 @@ export default function Pay() {
                 checkout_order_id: data.orderId,
                 method: paymentMethod === "cod" ? "COD" : "BANK",
               }),
+            }).then(async (linkResponse) => {
+              const linkData = await linkResponse.json();
+              if (!linkResponse.ok || !linkData.success) {
+                throw new Error(
+                  linkData.error ?? "checkout_order_link_failed"
+                );
+              }
             });
-            const linkData = await linkResponse.json();
-            if (!linkResponse.ok || !linkData.success) {
-              throw new Error(
-                linkData.error ?? "checkout_order_link_failed"
-              );
-            }
+            activeCheckoutOrderLink = linkOrder;
+            await linkOrder;
             console.log("Tạo đơn hàng trên Zalo thành công", data);
             setCheckingCheckoutPayment(true);
           } catch (error) {
@@ -456,6 +460,7 @@ export default function Pay() {
     currentOrderCodeRef.current = null;
     setOrderCode(null);
     activeCheckoutOrderId = null;
+    activeCheckoutOrderLink = null;
     activeCheckoutOrderSnapshot = null;
     activeCheckoutPaymentMethod = "qr";
     refreshOrders();
@@ -492,6 +497,7 @@ export default function Pay() {
       currentOrderCodeRef.current = null;
       setOrderCode(null);
       activeCheckoutOrderId = null;
+      activeCheckoutOrderLink = null;
       activeCheckoutOrderSnapshot = null;
       activeCheckoutPaymentMethod = "qr";
       setCart([]);
@@ -551,6 +557,9 @@ export default function Pay() {
 
         savingCodOrderRef.current = true;
         try {
+          if (activeCheckoutOrderLink) {
+            await activeCheckoutOrderLink;
+          }
           const orderSnapshot = activeCheckoutOrderSnapshot;
           if (!orderSnapshot || orderSnapshot.order_code !== completedOrderCode) {
             throw new Error("cod_order_snapshot_not_found");
@@ -634,6 +643,7 @@ export default function Pay() {
           currentOrderCodeRef.current = null;
           setOrderCode(null);
           activeCheckoutOrderId = null;
+          activeCheckoutOrderLink = null;
           activeCheckoutOrderSnapshot = null;
           activeCheckoutPaymentMethod = "qr";
           setCart([]);

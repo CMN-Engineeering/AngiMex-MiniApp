@@ -101,6 +101,7 @@ const paymentsByCode = new Map();
 
 const TELEGRAM_BOT_TOKEN = "8860000011:AAGQVstc7vHo734tIQ35Ipb0Fa1hxGybEbc";
 const TELEGRAM_CHAT_ID = "-5116779293";
+const NODERED_UPDATE_SHEET_URL = 'http://172.17.0.1:1880/update_sheet';
 
 function normalizePaymentAmount(value) {
   if (typeof value === 'number') {
@@ -300,6 +301,42 @@ async function sendCodOrderNotification(order) {
   );
 }
 
+async function sendOrderToSheet(order) {
+  try {
+    const url = new URL(NODERED_UPDATE_SHEET_URL);
+    url.search = new URLSearchParams({
+      order_code: String(order.order_code),
+      order_details: JSON.stringify(order.order_details),
+      user_id: String(order.user_id),
+      receiver_name: String(order.receiver_name),
+      phone_number: String(order.phone_number),
+      shipping_address: String(order.shipping_address),
+      total_amount: String(order.total_amount),
+      note: String(order.note ?? ''),
+      payment_method: String(order.payment_method),
+    });
+    const response = await fetch(url);
+    if (!response.ok) {
+      console.error(
+        'Node-RED Sheet update failed:',
+        response.status,
+        await response.text()
+      );
+    }
+  } catch (error) {
+    console.error('Failed to send order to Node-RED:', error);
+  }
+}
+
+function dispatchCodOrderNotifications(order) {
+  void Promise.all([
+    sendCodOrderNotification(order),
+    sendOrderToSheet(order),
+  ]).catch(error => {
+    console.error('Failed to send COD order notifications:', error);
+  });
+}
+
 async function confirmBankOrder(orderCode, transferAmount) {
   let client;
   try {
@@ -351,6 +388,7 @@ async function confirmBankOrder(orderCode, transferAmount) {
     await updateZaloOrderStatus(orderInfo.checkout_order_id || orderCode, 'bank', 1);
 
     const order = result.rows[0];
+    await sendOrderToSheet(order);
     const orderLines = Object.entries(order.order_details || {})
       .filter(([, quantity]) => Number.isFinite(Number(quantity)))
       .map(([name, quantity]) => `- ${escapeHtml(name)}: ${Number(quantity)}`)
@@ -525,20 +563,22 @@ app.get('/order_cod', async (req, res) => {
     await adjustProductStock(client, orderBreakdown, 'decrease');
 
     await client.query('COMMIT');
-    await sendCodOrderNotification({
+    const savedOrder = {
       order_code: targetOrderCode,
       user_id: String(user_id),
       amount: amounts.totalAmount,
       total_amount: amounts.totalAmount,
       order_amount: amounts.orderAmount,
       shipping_fee: amounts.shippingFee,
-      receiver_name,
-      phone_number,
-      note,
-      shipping_address,
+      receiver_name: String(receiver_name).slice(0, 255),
+      phone_number: String(phone_number).slice(0, 50),
+      note: String(note ?? '').slice(0, 100),
+      shipping_address: String(shipping_address).slice(0, 500),
       order_details: orderBreakdown,
-    });
+      payment_method: 'COD',
+    };
     res.json({ success: true, order_code: targetOrderCode });
+    dispatchCodOrderNotifications(savedOrder);
   } catch (dbError) {
     if (client) {
       await client.query('ROLLBACK');
@@ -866,6 +906,7 @@ app.post('/checkout_order_link', async (req, res) => {
            AND (
              checkout_order_id IS NULL OR checkout_order_id = $2
              OR order_state IN ('waiting for payment', 'pending_bank')
+             OR (order_state = 'reserved' AND $3 = 'COD')
            )
          FOR UPDATE
        ), updated AS (
@@ -876,7 +917,7 @@ app.post('/checkout_order_link', async (req, res) => {
          RETURNING order_row.*
        )
        SELECT * FROM updated`,
-      [String(order_code), String(checkout_order_id)]
+      [String(order_code), String(checkout_order_id), method]
     );
     if (result.rowCount === 0) {
       return res.status(409).json({ success: false, error: 'order_not_available' });
@@ -928,6 +969,7 @@ app.post('/confirm_checkout_payment', async (req, res) => {
     );
     await client.query('COMMIT');
 
+    await sendOrderToSheet(orderInfo);
     await updateZaloOrderStatus(String(checkout_order_id), 'bank', 1);
     const orderLines = Object.entries(orderInfo.order_details || {})
       .filter(([, quantity]) => Number.isFinite(Number(quantity)))
@@ -1056,20 +1098,22 @@ app.post('/order_cod', async (req, res) => {
     );
 
     await client.query('COMMIT');
-    await sendCodOrderNotification({
+    const savedOrder = {
       order_code: String(order_code),
       user_id: String(user_id),
       amount: amounts.totalAmount,
       total_amount: amounts.totalAmount,
       order_amount: amounts.orderAmount,
       shipping_fee: amounts.shippingFee,
-      receiver_name,
-      phone_number,
-      note,
-      shipping_address,
+      receiver_name: String(receiver_name).slice(0, 255),
+      phone_number: String(phone_number).slice(0, 50),
+      note: String(note ?? '').slice(0, 100),
+      shipping_address: String(shipping_address).slice(0, 500),
       order_details: order,
-    });
+      payment_method: 'COD',
+    };
     res.json({ success: true, order_code: String(order_code) });
+    dispatchCodOrderNotifications(savedOrder);
   } catch (dbError) {
     await client.query('ROLLBACK');
     console.error('Failed to save COD order to database:', dbError);

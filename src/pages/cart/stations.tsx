@@ -8,14 +8,19 @@ import { useNavigate } from "react-router-dom";
 
 function Station({
   station,
+  selected,
   onSelect,
 }: {
   station: Station & { distance?: string };
+  selected: boolean;
   onSelect: () => void;
 }) {
   return (
     <button
-      className="flex items-center space-x-4 p-4 pr-2 bg-section rounded-lg text-left"
+      aria-pressed={selected}
+      className={`flex items-center space-x-4 p-4 pr-2 bg-section rounded-lg text-left ${
+        selected ? "ring-2 ring-primary" : ""
+      }`}
       onClick={onSelect}
     >
       <img src={station.image}
@@ -35,6 +40,7 @@ function Station({
 
 function Stations() {
   const stations = useAtomValue(stationsState);
+  const selectedStationIndex = useAtomValue(selectedStationIndexState);
   const setSelectedStation = useSetAtom(selectedStationIndexState);
   const navigate = useNavigate();
 
@@ -42,6 +48,7 @@ function Stations() {
     <Station
       key={station.id}
       station={station}
+      selected={i === selectedStationIndex}
       onSelect={() => {
         setSelectedStation(i);
         toast.success("Đã thay đổi điểm nhận hàng");

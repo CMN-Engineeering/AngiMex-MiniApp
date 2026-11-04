@@ -1,3 +1,5 @@
+import { calculateDistance } from "@/utils/location";
+
 export function calculateShippingFee(distanceKm: number) {
   if (!Number.isFinite(distanceKm) || distanceKm < 0) {
     throw new Error("invalid_shipping_distance");
@@ -16,4 +18,27 @@ export function calculateShippingFee(distanceKm: number) {
     return 20000;
   }
   return 30000;
+}
+
+export function getCheapestShippingStation(
+  stations: Station[],
+  destination: Location
+) {
+  return stations.reduce<{ station: Station; fee: number } | null>(
+    (cheapest, station) => {
+      const fee = calculateShippingFee(
+        calculateDistance(
+          station.location.lat,
+          station.location.lng,
+          destination.lat,
+          destination.lng
+        )
+      );
+
+      return !cheapest || fee < cheapest.fee
+        ? { station, fee }
+        : cheapest;
+    },
+    null
+  );
 }
