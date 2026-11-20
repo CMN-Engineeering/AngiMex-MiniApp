@@ -34,6 +34,7 @@ import { calculateDistance } from "./utils/location";
 import { formatDistant } from "./utils/format";
 import CONFIG from "./config";
 import { backendRequest, getCurrentUserId } from "@/utils/backend";
+import { getNearestShippingStation } from "@/utils/shipping";
 export const userInfoKeyState = atom(0);
 
 export const userInfoState = atom<Promise<UserInfo>>(async (get) => {
@@ -254,7 +255,7 @@ export const stationsState = atom(async () => {
     console.warn(error);
   }
 
-  const stations = await requestWithFallback<Station[]>("/stations", []);
+  const stations = await backendRequest<Station[]>("/get_stations");
   const stationsWithDistance = stations.map((station) => ({
     ...station,
     distance: location
@@ -389,6 +390,51 @@ export const deliveryModeState = atomWithStorage<Delivery["type"]>(
   CONFIG.STORAGE_KEYS.DELIVERY,
   "shipping"
 );
+
+export const shippingFeeState = atom(async (get) => {
+  if (get(deliveryModeState) === "pickup") {
+    return { fee: 0, station: null, distanceKm: null, errorCode: null };
+  }
+
+  const destination = get(shippingAddressState)?.location;
+  if (!destination) {
+    return { fee: null, station: null, distanceKm: null, errorCode: null };
+  }
+
+  const stations = await get(stationsState);
+  const nearest = getNearestShippingStation(stations, destination);
+  if (!nearest) {
+    return { fee: null, station: null, distanceKm: null, errorCode: null };
+  }
+  const query = new URLSearchParams({
+    distance: String(Math.ceil(nearest.distanceKm)),
+  });
+  const result = await backendRequest<{
+    success: boolean;
+    fee?: number;
+    error_code?: string;
+  }>(`/get_shipping_fee?${query.toString()}`);
+
+  if (!result.success) {
+    return {
+      fee: null,
+      station: nearest.station,
+      distanceKm: nearest.distanceKm,
+      errorCode: result.error_code ?? "shipping_fee_failed",
+    };
+  }
+  const fee = result.fee;
+  if (typeof fee !== "number" || !Number.isFinite(fee) || fee < 0) {
+    throw new Error("invalid_shipping_fee_response");
+  }
+
+  return {
+    fee,
+    station: nearest.station,
+    distanceKm: nearest.distanceKm,
+    errorCode: null,
+  };
+});
 
 export const orderNumState = atomWithStorage<number>(
   CONFIG.STORAGE_KEYS.ORDER_NUM,

@@ -1,44 +1,27 @@
 import { calculateDistance } from "@/utils/location";
+import type { Location, Station } from "@/types";
 
-export function calculateShippingFee(distanceKm: number) {
-  if (!Number.isFinite(distanceKm) || distanceKm < 0) {
-    throw new Error("invalid_shipping_distance");
-  }
+export const SHIPPING_DISTANCE_LIMIT_MESSAGE =
+  "Hiện chưa hỗ trợ giao trên 20km, liên hệ bộ phận CSKH để có giá vận chuyển chính xác";
 
-  if (distanceKm <= 3) {
-    return 0;
-  }
-  if (distanceKm < 5) {
-    return 10000;
-  }
-  if (distanceKm < 10) {
-    return 15000;
-  }
-  if (distanceKm < 15) {
-    return 20000;
-  }
-  return 30000;
-}
-
-export function getCheapestShippingStation(
+export function getNearestShippingStation(
   stations: Station[],
   destination: Location
 ) {
-  return stations.reduce<{ station: Station; fee: number } | null>(
-    (cheapest, station) => {
-      const fee = calculateShippingFee(
-        calculateDistance(
-          station.location.lat,
-          station.location.lng,
-          destination.lat,
-          destination.lng
-        )
-      );
-
-      return !cheapest || fee < cheapest.fee
-        ? { station, fee }
-        : cheapest;
-    },
-    null
-  );
+  return stations.reduce<
+    { station: Station; distanceKm: number } | null
+  >((nearest, station) => {
+    const distanceKm = calculateDistance(
+      station.location.lat,
+      station.location.lng,
+      destination.lat,
+      destination.lng
+    );
+    if (!Number.isFinite(distanceKm)) {
+      throw new Error("invalid_shipping_distance");
+    }
+    return !nearest || distanceKm < nearest.distanceKm
+      ? { station, distanceKm }
+      : nearest;
+  }, null);
 }

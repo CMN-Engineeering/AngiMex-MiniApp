@@ -1,35 +1,30 @@
 import { useAtomValue } from "jotai";
 import { loadable } from "jotai/utils";
 import { useMemo } from "react";
-import {
-  cartTotalState,
-  deliveryModeState,
-  stationsState,
-  shippingAddressState,
-} from "@/state";
+import { cartTotalState, shippingFeeState } from "@/state";
 import { formatPrice } from "@/utils/format";
-import { getCheapestShippingStation } from "@/utils/shipping";
+import { SHIPPING_DISTANCE_LIMIT_MESSAGE } from "@/utils/shipping";
 import Section from "@/components/section";
 import HorizontalDivider from "@/components/horizontal-divider";
 
 export default function CartSummary() {
   const { totalAmount } = useAtomValue(cartTotalState);
-  const deliveryMode = useAtomValue(deliveryModeState);
-  const shippingAddress = useAtomValue(shippingAddressState);
-  const stations = useAtomValue(
-    useMemo(() => loadable(stationsState), [])
+  const shippingFeeResult = useAtomValue(
+    useMemo(() => loadable(shippingFeeState), [])
   );
-  const shippingStation =
-    deliveryMode === "shipping" &&
-    shippingAddress?.location &&
-    stations.state === "hasData" &&
-    stations.data.length > 0
-      ? getCheapestShippingStation(stations.data, shippingAddress.location)
-      : null;
-  const shippingFee =
-    deliveryMode === "pickup"
-      ? 0
-      : shippingStation?.fee ?? null;
+  const shippingFeeData =
+    shippingFeeResult.state === "hasData" ? shippingFeeResult.data : null;
+  const shippingFee = shippingFeeData?.fee ?? null;
+  const shippingStation = shippingFeeData?.station;
+
+  const shippingFeeMessage =
+    shippingFeeData?.errorCode === "distance_over_limit"
+      ? SHIPPING_DISTANCE_LIMIT_MESSAGE
+      : shippingFeeResult.state === "hasError"
+      ? "Không thể tính phí vận chuyển"
+      : shippingFeeResult.state === "loading"
+      ? "Đang tính phí vận chuyển"
+      : "Nhập địa chỉ để tính";
 
   return (
     <Section title="Thanh toán" className="rounded-lg">
@@ -43,15 +38,15 @@ export default function CartSummary() {
             <tr>
               <th>
                 <div>Phí vận chuyển</div>
-                {deliveryMode === "shipping" && shippingStation && (
+                {shippingStation && (
                   <div className="text-xs text-inactive">
-                    Vận chuyển từ {shippingStation.station.name}
+                    Vận chuyển từ {shippingStation.name}
                   </div>
                 )}
               </th>
               <td>
                 {shippingFee === null
-                  ? "Nhập địa chỉ để tính"
+                  ? shippingFeeMessage
                   : formatPrice(shippingFee)}
               </td>
             </tr>

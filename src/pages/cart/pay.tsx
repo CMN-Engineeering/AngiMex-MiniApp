@@ -11,12 +11,12 @@ import {
   orderNumState,
   refreshOrdersState,
   selectedStationState,
-  stationsState,
+  shippingFeeState,
   shippingAddressState,
   userInfoState,
 } from "@/state";
 import { formatPrice, formatShippingAddress } from "@/utils/format";
-import { getCheapestShippingStation } from "@/utils/shipping";
+import { SHIPPING_DISTANCE_LIMIT_MESSAGE } from "@/utils/shipping";
 import { Button, Modal } from "zmp-ui";
 import toast from "react-hot-toast";
 import { useNavigate } from "react-router-dom";
@@ -143,21 +143,21 @@ export default function Pay() {
   const selectedStation = useAtomValue(
     useMemo(() => loadable(selectedStationState), [])
   );
-  const stations = useAtomValue(
-    useMemo(() => loadable(stationsState), [])
-  );
   const userInfo = useAtomValue(useMemo(() => loadable(userInfoState), []));
-  const shippingStation =
-    deliveryMode === "shipping" &&
-    shippingAddress?.location &&
-    stations.state === "hasData" &&
-    stations.data.length > 0
-      ? getCheapestShippingStation(stations.data, shippingAddress.location)
-      : null;
-  const shippingFee =
-    deliveryMode === "pickup"
-      ? 0
-      : shippingStation?.fee ?? null;
+  const shippingFeeResult = useAtomValue(
+    useMemo(() => loadable(shippingFeeState), [])
+  );
+  const shippingFeeData =
+    shippingFeeResult.state === "hasData" ? shippingFeeResult.data : null;
+  const shippingFee = shippingFeeData?.fee ?? null;
+  const shippingFeeUnavailableMessage =
+    shippingFeeData?.errorCode === "distance_over_limit"
+      ? SHIPPING_DISTANCE_LIMIT_MESSAGE
+      : shippingFeeResult.state === "hasError"
+      ? "Không thể tính phí vận chuyển. Vui lòng thử lại."
+      : shippingFeeResult.state === "loading"
+      ? "Vui lòng chờ tính phí vận chuyển."
+      : "Vui lòng nhập địa chỉ giao hàng để tính phí vận chuyển.";
   const totalAmount = subtotal + (shippingFee ?? 0);
 
   const shippingAddressText =
@@ -187,7 +187,7 @@ export default function Pay() {
     if (reserving || paying) return;
 
     if (shippingFee === null) {
-      toast.error("Vui lòng nhập địa chỉ giao hàng để tính phí vận chuyển.");
+      toast.error(shippingFeeUnavailableMessage);
       return;
     }
 
@@ -315,7 +315,7 @@ export default function Pay() {
       return;
     }
     if (shippingFee === null) {
-      toast.error("Vui lòng nhập địa chỉ giao hàng để tính phí vận chuyển.");
+      toast.error(shippingFeeUnavailableMessage);
       return;
     }
     if (

@@ -75,6 +75,95 @@ app.use((req, res, next) => {
   next();
 });
 
+let userCartTableReady;
+async function ensureUserCartTable() {
+  if (!userCartTableReady) {
+    userCartTableReady = pool.query(`
+      CREATE TABLE IF NOT EXISTS user_cart (
+        user_id VARCHAR(100) NOT NULL,
+        item_id INTEGER NOT NULL,
+        amount INTEGER NOT NULL CHECK (amount > 0),
+        PRIMARY KEY (user_id, item_id)
+      )
+    `).catch((error) => {
+      userCartTableReady = undefined;
+      throw error;
+    });
+  }
+  await userCartTableReady;
+}
+
+app.get('/save_cart', async (req, res) => {
+  const userId = req.query.user_id;
+  if (typeof userId !== 'string' || !userId.trim()) {
+    return res.status(400).json({ success: false, error_code: 'invalid_user_id' });
+  }
+
+  try {
+    await ensureUserCartTable();
+    const result = await pool.query(
+      `SELECT item_id, amount
+       FROM user_cart
+       WHERE user_id = $1
+       ORDER BY item_id`,
+      [userId]
+    );
+    return res.json({ success: true, items: result.rows });
+  } catch (error) {
+    console.error('Error loading user cart:', error);
+    return res.status(500).json({ success: false, error_code: 'cart_load_failed' });
+  }
+});
+
+app.post('/save_cart', async (req, res) => {
+  const { user_id: userId, items } = req.body ?? {};
+  if (
+    typeof userId !== 'string' ||
+    !userId.trim() ||
+    !Array.isArray(items) ||
+    items.some(
+      (item) =>
+        !item ||
+        !Number.isSafeInteger(item.item_id) ||
+        item.item_id <= 0 ||
+        !Number.isSafeInteger(item.amount) ||
+        item.amount <= 0
+    ) ||
+    new Set(items.map((item) => item.item_id)).size !== items.length
+  ) {
+    return res.status(400).json({ success: false, error_code: 'invalid_cart' });
+  }
+
+  let client;
+  try {
+    await ensureUserCartTable();
+    client = await pool.connect();
+    await client.query('BEGIN');
+    await client.query('DELETE FROM user_cart WHERE user_id = $1', [userId]);
+    for (const item of items) {
+      await client.query(
+        `INSERT INTO user_cart (user_id, item_id, amount)
+         VALUES ($1, $2, $3)`,
+        [userId, item.item_id, item.amount]
+      );
+    }
+    await client.query('COMMIT');
+    return res.json({ success: true });
+  } catch (error) {
+    if (client) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        console.error('Error rolling back user cart save:', rollbackError);
+      }
+    }
+    console.error('Error saving user cart:', error);
+    return res.status(500).json({ success: false, error_code: 'cart_save_failed' });
+  } finally {
+    client?.release();
+  }
+});
+
 app.get('/get_app_health', async (req, res) => {
   try {
     const result = await pool.query(
@@ -94,6 +183,112 @@ app.get('/get_app_health', async (req, res) => {
   } catch (error) {
     console.error('Error fetching app health:', error);
     res.status(500).json({ success: false, error_code: 'db_error' });
+  }
+});
+
+app.get('/get_stations', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT to_jsonb(station) AS station FROM stations AS station'
+    );
+    const stations = result.rows.map(({ station }) => {
+      const location =
+        station.location && typeof station.location === 'object'
+          ? station.location
+          : {};
+      const id = Number(station.id ?? station.station_id);
+      const latitudeValue =
+        station.latitude ??
+        station.lat ??
+        station.station_latitude ??
+        location.lat ??
+        location.latitude;
+      const longitudeValue =
+        station.longitude ??
+        station.lng ??
+        station.station_longitude ??
+        location.lng ??
+        location.longitude;
+      const latitude = Number(latitudeValue);
+      const longitude = Number(longitudeValue);
+      const name = station.name ?? station.station_name;
+      const image =
+        station.image ??
+        station.image_url ??
+        station.image_src ??
+        station.station_image;
+      const address = station.address ?? station.station_address;
+
+      if (
+        !Number.isSafeInteger(id) ||
+        typeof name !== 'string' ||
+        typeof image !== 'string' ||
+        typeof address !== 'string' ||
+        latitudeValue === undefined ||
+        latitudeValue === null ||
+        latitudeValue === '' ||
+        longitudeValue === undefined ||
+        longitudeValue === null ||
+        longitudeValue === '' ||
+        !Number.isFinite(latitude) ||
+        latitude < -90 ||
+        latitude > 90 ||
+        !Number.isFinite(longitude) ||
+        longitude < -180 ||
+        longitude > 180
+      ) {
+        throw new Error('Invalid station data in database');
+      }
+
+      return {
+        id,
+        name,
+        image,
+        address,
+        location: { lat: latitude, lng: longitude },
+      };
+    });
+
+    return res.json(stations);
+  } catch (error) {
+    console.error('Error fetching stations:', error);
+    return res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+app.get('/get_shipping_fee', async (req, res) => {
+  const distance = Number(req.query.distance);
+  if (!Number.isFinite(distance) || distance < 0) {
+    return res.status(400).json({ success: false, error_code: 'invalid_distance' });
+  }
+  if (distance > 20) {
+    return res.json({ success: false, error_code: 'distance_over_limit' });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT price
+       FROM shipping_fee
+       WHERE ($1::numeric > min OR (min = 0 AND $1::numeric = 0))
+         AND $1::numeric <= max
+       ORDER BY min DESC
+       LIMIT 1`,
+      [distance]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({
+        success: false,
+        error_code: 'shipping_fee_not_found',
+      });
+    }
+
+    return res.json({
+      success: true,
+      fee: Number(result.rows[0].price),
+    });
+  } catch (error) {
+    console.error('Error fetching shipping fee:', error);
+    return res.status(500).json({ success: false, error_code: 'db_error' });
   }
 });
 

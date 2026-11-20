@@ -76,13 +76,13 @@ const router = createBrowserRouter(
             noFooter: true,
           },
         },
-        {
-          path: "/profile",
-          element: <ProfilePage />,
-          handle: {
-            logo: true,
-          },
-        },
+        // {
+        //   path: "/profile",
+        //   element: <ProfilePage />,
+        //   handle: {
+        //     logo: true,
+        //   },
+        // },
         {
           path: "/profile/edit",
           element: <ProfileEditorPage />,

@@ -9,56 +9,125 @@ import FloatingCartPreview from "./floating-cart-preview";
 import { useAtom, useAtomValue } from "jotai";
 import { cartState, productsState } from "@/state";
 import { loadable } from "jotai/utils";
-import { useEffect, useMemo, useState } from "react";
-import { getUserID } from "zmp-sdk";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { openChat } from "zmp-sdk/apis";
 import { Button } from "zmp-ui";
-import { backendRequest } from "@/utils/backend";
+import { backendPost, backendRequest, getCurrentUserId } from "@/utils/backend";
 import { getConfig } from "@/utils/template";
 
 function CartInitializer() {
   const [cart, setCart] = useAtom(cartState);
   const products = useAtomValue(useMemo(() => loadable(productsState), []));
+  const [loadedUserId, setLoadedUserId] = useState<string | null>(null);
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
+  const hasLoadedCart = useRef(false);
+  const cartRef = useRef(cart);
+  cartRef.current = cart;
 
   useEffect(() => {
-    if (products.state !== "hasData") {
+    if (products.state !== "hasData" || hasLoadedCart.current) {
       return;
     }
 
     let cancelled = false;
     const loadCart = async () => {
       try {
-        const userId = await getUserID({});
+        const userId = await getCurrentUserId();
         const data = await backendRequest<{
           success: boolean;
           items: { item_id: number; amount: number }[];
-        }>(`/get_card_by_id?user_id=${encodeURIComponent(userId)}`);
-        if (cancelled || !data.success) {
-          return;
+        }>(`/save_cart?user_id=${encodeURIComponent(userId)}`);
+        if (!data.success) {
+          throw new Error("cart_load_failed");
         }
-        setCart(
-          data.items
-            .map((item) => ({
-              product: products.data.find(
-                (product) => product.id === Number(item.item_id)
-              ),
-              quantity: Number(item.amount),
-            }))
-            .filter(
-              (item): item is { product: (typeof products.data)[number]; quantity: number } =>
-                Boolean(item.product) && item.quantity > 0
-            )
-        );
+        if (cancelled) return;
+
+        const loadedCart: typeof cart = [];
+        for (const item of data.items) {
+          const product = products.data.find(
+            (candidate) => candidate.id === Number(item.item_id)
+          );
+          const quantity = Number(item.amount);
+          const availableQuantity = Math.min(quantity, product?.stock ?? 0);
+          if (product && Number.isSafeInteger(quantity) && availableQuantity > 0) {
+            loadedCart.push({
+              product,
+              quantity: availableQuantity,
+            });
+          }
+        }
+
+        const mergedCart = [...loadedCart];
+        for (const localItem of cartRef.current) {
+          const currentItemIndex = mergedCart.findIndex(
+            (item) => item.product.id === localItem.product.id
+          );
+          const currentItem =
+            currentItemIndex === -1 ? undefined : mergedCart[currentItemIndex];
+          const quantity = Math.min(
+            localItem.product.stock,
+            (currentItem?.quantity ?? 0) + localItem.quantity
+          );
+          if (quantity <= 0) {
+            if (currentItemIndex !== -1) {
+              mergedCart.splice(currentItemIndex, 1);
+            }
+            continue;
+          }
+          const mergedItem = {
+            product: localItem.product,
+            quantity,
+          };
+          if (currentItemIndex === -1) {
+            mergedCart.push(mergedItem);
+          } else {
+            mergedCart[currentItemIndex] = mergedItem;
+          }
+        }
+        setCart(mergedCart);
+        hasLoadedCart.current = true;
+        setLoadedUserId(userId);
       } catch (error) {
-        console.warn("Failed to load cart:", error);
+        if (!cancelled) {
+          console.warn("Failed to load cart:", error);
+        }
       }
     };
 
-    loadCart();
+    void loadCart();
     return () => {
       cancelled = true;
     };
   }, [products, setCart]);
+
+  useEffect(() => {
+    if (!loadedUserId) return;
+
+    const timeoutId = window.setTimeout(() => {
+      const items = cart.map(({ product, quantity }) => ({
+        item_id: product.id,
+        amount: quantity,
+      }));
+      saveQueue.current = saveQueue.current
+        .then(async () => {
+          const result = await backendPost<
+            {
+              user_id: string;
+              items: { item_id: number; amount: number }[];
+            },
+            { success: boolean }
+          >("/save_cart", { user_id: loadedUserId, items });
+          if (!result.success) {
+            throw new Error("cart_save_failed");
+          }
+        })
+        .catch((error) => {
+          console.warn("Failed to save cart:", error);
+        });
+    }, 300);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [cart, loadedUserId]);
 
   return null;
 }

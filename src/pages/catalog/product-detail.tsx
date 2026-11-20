@@ -98,7 +98,7 @@ export default function ProductDetailPage() {
           variant="tertiary"
           disabled={product.stock === 0}
           onClick={() => {
-            addToCart(quantity, {
+            addToCart((currentQuantity) => currentQuantity + quantity, {
               toast: true,
             });
           }}
@@ -108,7 +108,7 @@ export default function ProductDetailPage() {
         <Button
           disabled={product.stock === 0}
           onClick={() => {
-            addToCart(quantity);
+            addToCart((currentQuantity) => currentQuantity + quantity);
             navigate("/cart", {
               viewTransition: true,
             });

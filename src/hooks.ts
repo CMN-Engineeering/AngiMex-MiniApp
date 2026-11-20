@@ -71,6 +71,9 @@ export function useAddToCart(product: Product) {
     options?: { toast: boolean }
   ) => {
     setCart((cart) => {
+      const currentCartItem = cart.find(
+        (item) => item.product.id === product.id
+      );
       const newQuantity =
         typeof quantity === "function"
           ? quantity(currentCartItem?.quantity ?? 0)
@@ -78,19 +81,26 @@ export function useAddToCart(product: Product) {
       const limitedQuantity = Math.min(Math.max(0, newQuantity), stock);
       if (limitedQuantity === 0) {
         if (currentCartItem) {
-          cart.splice(cart.indexOf(currentCartItem), 1);
+          return cart.filter((item) => item.product.id !== product.id);
         }
       } else {
         if (currentCartItem) {
-          currentCartItem.quantity = limitedQuantity;
+          return cart.map((item) =>
+            item.product.id === product.id
+              ? { ...item, quantity: limitedQuantity }
+              : item
+          );
         } else {
-          cart.push({
-            product,
-            quantity: limitedQuantity,
-          });
+          return [
+            ...cart,
+            {
+              product,
+              quantity: limitedQuantity,
+            },
+          ];
         }
       }
-      return [...cart];
+      return cart;
     });
     if (options?.toast) {
       stock === 0
