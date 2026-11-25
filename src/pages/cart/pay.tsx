@@ -9,6 +9,7 @@ import {
   cartTotalState,
   deliveryModeState,
   orderNumState,
+  refreshProductsState,
   refreshOrdersState,
   selectedStationState,
   shippingFeeState,
@@ -30,7 +31,25 @@ const ORDER_WAIT_FOR_PAYING = "https://cmnes.com:4488/order_paying";
 const ORDER_PENDING_BANK_URL = "https://cmnes.com:4488/order_pending_bank";
 const ORDER_COD = "https://cmnes.com:4488/order_cod";
 const ORDER_CONFIRM_URL = "https://cmnes.com:4488/order_confirm";
+const CONFIRM_CHECKOUT_PAYMENT_URL = "https://cmnes.com:4488/confirm_checkout_payment";
 const ORDER_CONFIRM_POLL_INTERVAL_MS = 3000;
+const ORDER_SAVE_TIMEOUT_MS = 30000;
+
+function fetchOrderSave(url: string, options: RequestInit) {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(
+      () => reject(new Error("order_save_timed_out")),
+      ORDER_SAVE_TIMEOUT_MS
+    );
+  });
+
+  return Promise.race([fetch(url, options), timeout]).finally(() => {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
+  });
+}
 
 // This runtime-only value is cleared when the app is closed or reloaded.
 let activeOrderCode: string | null = null;
@@ -119,6 +138,7 @@ export default function Pay() {
   const [, setNote] = useAtom(cartNoteState);
   const note = useAtomValue(cartNoteState);
   const [orderNum, setOrderNum] = useAtom(orderNumState);
+  const refreshProducts = useSetAtom(refreshProductsState);
   const [orderCode, setOrderCode] = useState<string | null>(activeOrderCode);
   const refreshOrders = useSetAtom(refreshOrdersState);
   const navigate = useNavigate();
@@ -404,7 +424,7 @@ export default function Pay() {
               return;
             }
 
-            const linkOrder = fetch(CHECKOUT_ORDER_LINK_URL, {
+            const linkOrder = fetchOrderSave(CHECKOUT_ORDER_LINK_URL, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -503,6 +523,7 @@ export default function Pay() {
       setCart([]);
       setNote("");
       setOrderNum((currentOrderNum) => currentOrderNum + 1);
+      refreshProducts();
       refreshOrders();
 
       if (orderState === "cod") {
@@ -520,7 +541,7 @@ export default function Pay() {
         navigate("/orders/cod", { viewTransition: true });
       }
     },
-    [navigate, refreshOrders, setCart, setNote, setOrderNum]
+    [navigate, refreshOrders, refreshProducts, setCart, setNote, setOrderNum]
   );
 
   const handlePaymentDone = useCallback(async (data: unknown) => {
@@ -564,7 +585,7 @@ export default function Pay() {
           if (!orderSnapshot || orderSnapshot.order_code !== completedOrderCode) {
             throw new Error("cod_order_snapshot_not_found");
           }
-          const response = await fetch(ORDER_COD, {
+          const response = await fetchOrderSave(ORDER_COD, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -590,7 +611,7 @@ export default function Pay() {
         }
       };
 
-      const saveAndDisplayBankOrder = async () => {
+      const saveAndDisplayBankOrder = async (confirmPayment: boolean) => {
         const completedOrderCode = currentOrderCodeRef.current;
         const orderSnapshot = activeCheckoutOrderSnapshot;
         if (
@@ -610,7 +631,7 @@ export default function Pay() {
 
         savingBankOrderRef.current = true;
         try {
-          const linkResponse = await fetch(CHECKOUT_ORDER_LINK_URL, {
+          const linkResponse = await fetchOrderSave(CHECKOUT_ORDER_LINK_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -626,7 +647,7 @@ export default function Pay() {
             );
           }
 
-          const response = await fetch(ORDER_PENDING_BANK_URL, {
+          const response = await fetchOrderSave(ORDER_PENDING_BANK_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(orderSnapshot),
@@ -636,6 +657,33 @@ export default function Pay() {
             throw new Error(
               savedOrder.error_code ?? "pending_bank_save_failed"
             );
+          }
+
+          if (confirmPayment) {
+            const confirmationResponse = await fetchOrderSave(
+              CONFIRM_CHECKOUT_PAYMENT_URL,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  order_code: completedOrderCode,
+                  checkout_order_id: activeCheckoutOrderId,
+                  user_id: orderSnapshot.user_id,
+                }),
+              }
+            );
+            const confirmation = await confirmationResponse.json();
+            if (!confirmationResponse.ok || !confirmation.success) {
+              throw new Error(
+                confirmation.error_code ?? "checkout_confirmation_failed"
+              );
+            }
+          }
+
+          if (confirmPayment) {
+            setCheckingCheckoutPayment(false);
+            finalizeSuccessfulOrder("confirmed", completedOrderCode);
+            return;
           }
 
           setCheckingCheckoutPayment(false);
@@ -649,12 +697,13 @@ export default function Pay() {
           setCart([]);
           setNote("");
           setOrderNum((currentOrderNum) => currentOrderNum + 1);
+          refreshProducts();
           refreshOrders();
           navigate("/orders/waiting for payment", { viewTransition: true });
         } catch (error) {
-          console.error("Failed to save confirmed Bank order:", error);
+          console.error("Failed to save or confirm Bank order:", error);
           setCheckingCheckoutPayment(false);
-          toast.error("Không thể lưu đơn chuyển khoản đã xác nhận. Vui lòng thử lại.");
+          toast.error("Không thể xác nhận thanh toán chuyển khoản. Vui lòng thử lại.");
         } finally {
           savingBankOrderRef.current = false;
           releaseOrderCreation();
@@ -663,12 +712,19 @@ export default function Pay() {
 
       switch (result.resultCode) {
         case 1:
+          if (activeCheckoutPaymentMethod === "cod") {
+            await saveAndDisplayCodOrder();
+          } else {
+            setCheckingCheckoutPayment(true);
+            await saveAndDisplayBankOrder(true);
+          }
+          break;
         case 0:
           if (activeCheckoutPaymentMethod === "cod") {
             await saveAndDisplayCodOrder();
           } else {
             setCheckingCheckoutPayment(true);
-            await saveAndDisplayBankOrder();
+            await saveAndDisplayBankOrder(false);
           }
           break;
         case -1:

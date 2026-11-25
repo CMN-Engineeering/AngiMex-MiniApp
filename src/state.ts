@@ -163,10 +163,11 @@ export const categoriesStateUpwrapped = unwrap(
   (prev) => prev ?? []
 );
 
-export const allProductsState = atom(async (get) => {
+export const allProductsState = atomWithRefresh(async (get) => {
   const categories = await get(categoriesState);
   const products = await backendRequest<(Product & { categoryId: number })[]>(
-    "/get_product_details"
+    "/get_product_details",
+    { cache: "no-store" }
   );
   return products.map((product) => ({
     ...product,
@@ -175,6 +176,8 @@ export const allProductsState = atom(async (get) => {
     )!,
   }));
 });
+
+export const refreshProductsState = allProductsState;
 
 export const productsState = atom(async (get) => {
   const products = await get(allProductsState);

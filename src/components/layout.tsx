@@ -132,36 +132,7 @@ function CartInitializer() {
   return null;
 }
 
-function MaintenanceNotice() {
-  const [maintenance, setMaintenance] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    const checkHealth = async () => {
-      try {
-        const health = await backendRequest<{
-          success: boolean;
-          isHealthy: boolean | null;
-        }>("/get_app_health");
-        if (!health.success) {
-          throw new Error("app_health_check_failed");
-        }
-        if (!cancelled) {
-          setMaintenance(health.isHealthy === false);
-        }
-      } catch (error) {
-        console.warn("Failed to check app maintenance status:", error);
-      }
-    };
-
-    void checkHealth();
-    const intervalId = setInterval(() => void checkHealth(), 60_000);
-    return () => {
-      cancelled = true;
-      clearInterval(intervalId);
-    };
-  }, []);
-
+function MaintenancePage() {
   const contactSupport = async () => {
     try {
       await openChat({
@@ -174,16 +145,10 @@ function MaintenanceNotice() {
     }
   };
 
-  if (!maintenance) {
-    return null;
-  }
-
   return (
     <div
-      className="fixed inset-0 flex items-center justify-center bg-black/60 p-4"
-      style={{ zIndex: 1000 }}
-      role="alertdialog"
-      aria-modal="true"
+      className="flex h-screen w-screen items-center justify-center bg-section p-4 text-foreground"
+      role="main"
       aria-labelledby="maintenance-title"
       aria-describedby="maintenance-description"
     >
@@ -203,6 +168,50 @@ function MaintenanceNotice() {
 }
 
 export default function Layout() {
+  const [appStatus, setAppStatus] = useState<
+    "checking" | "healthy" | "maintenance"
+  >("checking");
+
+  useEffect(() => {
+    let cancelled = false;
+    const checkHealth = async () => {
+      try {
+        const health = await backendRequest<{
+          success: boolean;
+          isHealthy: boolean | null;
+        }>("/get_app_health");
+        if (!health.success) {
+          throw new Error("app_health_check_failed");
+        }
+        if (!cancelled) {
+          setAppStatus(health.isHealthy === false ? "maintenance" : "healthy");
+        }
+      } catch (error) {
+        console.warn("Failed to check app maintenance status:", error);
+        if (!cancelled) {
+          setAppStatus("maintenance");
+        }
+      }
+    };
+
+    void checkHealth();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (appStatus === "maintenance") {
+    return <MaintenancePage />;
+  }
+
+  if (appStatus === "checking") {
+    return (
+      <div className="h-screen w-screen overflow-y-auto bg-background">
+        <PageSkeleton />
+      </div>
+    );
+  }
+
   return (
     <div className="w-screen h-screen flex flex-col bg-section text-foreground">
       <CartInitializer />
@@ -221,7 +230,6 @@ export default function Layout() {
       />
       <FloatingCartPreview />
       <ScrollRestoration />
-      <MaintenanceNotice />
     </div>
   );
 }

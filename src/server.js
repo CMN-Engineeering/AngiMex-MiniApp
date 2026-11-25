@@ -1359,7 +1359,7 @@ app.post('/order_pending_bank', async (req, res) => {
   try {
     await client.query('BEGIN');
     const existingOrder = await client.query(
-      `SELECT order_state, user_id
+      `SELECT order_state, user_id, stock_reserved, order_details
        FROM orders WHERE order_code = $1 FOR UPDATE`,
       [String(order_code)]
     );
@@ -1372,49 +1372,70 @@ app.post('/order_pending_bank', async (req, res) => {
       return res.status(409).json({ success: false, error_code: 'order_not_available' });
     }
 
-    if (existingOrder.rows[0].order_state === 'pending_bank') {
-      await client.query('COMMIT');
-      return res.json({ success: true, order_code: String(order_code) });
-    }
-    if (existingOrder.rows[0].order_state !== 'reserved') {
+    const currentOrder = existingOrder.rows[0];
+    if (!['reserved', 'pending_bank'].includes(currentOrder.order_state)) {
       await client.query('ROLLBACK');
       return res.status(409).json({ success: false, error_code: 'order_not_available' });
     }
 
-    await adjustProductStock(client, order, 'decrease');
-    await client.query(
-      `UPDATE orders
-       SET order_state = 'pending_bank', amount = $3, total_amount = $4,
-           order_amount = $5, shipping_fee = $6, shipping_address = $7,
-           location_latitude = $8, location_longitude = $9,
-           receiver_name = $10, phone_number = $11, note = $12,
-           order_details = $13, payment_method = 'BANK', stock_reserved = TRUE
-       WHERE order_code = $1 AND user_id = $2`,
-      [
-        String(order_code),
-        String(user_id),
-        amounts.totalAmount,
-        amounts.totalAmount,
-        amounts.orderAmount,
-        amounts.shippingFee,
-        String(shipping_address).slice(0, 500),
-        location.latitude,
-        location.longitude,
-        String(receiver_name).slice(0, 255),
-        String(phone_number).slice(0, 50),
-        String(note ?? '').slice(0, 100),
-        order,
-      ]
-    );
+    const hasSavedOrderDetails =
+      currentOrder.order_details &&
+      typeof currentOrder.order_details === 'object' &&
+      Object.keys(currentOrder.order_details).length > 0;
+    if (
+      currentOrder.order_state === 'pending_bank' &&
+      currentOrder.stock_reserved &&
+      hasSavedOrderDetails
+    ) {
+      await client.query('COMMIT');
+    } else {
+      if (!currentOrder.stock_reserved) {
+        await adjustProductStock(client, order, 'decrease');
+      }
+      await client.query(
+        `UPDATE orders
+         SET order_state = 'pending_bank', amount = $3, total_amount = $4,
+             order_amount = $5, shipping_fee = $6, shipping_address = $7,
+             location_latitude = $8, location_longitude = $9,
+             receiver_name = $10, phone_number = $11, note = $12,
+             order_details = $13, payment_method = 'BANK', stock_reserved = TRUE
+         WHERE order_code = $1 AND user_id = $2`,
+        [
+          String(order_code),
+          String(user_id),
+          amounts.totalAmount,
+          amounts.totalAmount,
+          amounts.orderAmount,
+          amounts.shippingFee,
+          String(shipping_address).slice(0, 500),
+          location.latitude,
+          location.longitude,
+          String(receiver_name).slice(0, 255),
+          String(phone_number).slice(0, 50),
+          String(note ?? '').slice(0, 100),
+          order,
+        ]
+      );
 
-    await client.query('COMMIT');
+      await client.query('COMMIT');
+    }
     client.release();
     client = null;
+    res.json({ success: true, order_code: String(order_code) });
+
     const transferAmount = paymentsByCode.get(String(order_code));
     if (transferAmount !== undefined) {
-      await confirmBankOrder(String(order_code), transferAmount);
+      void confirmBankOrder(String(order_code), transferAmount).then((result) => {
+        if (!result.success && result.error_code !== 'order_not_available') {
+          console.warn(
+            `Bank payment confirmation was not applied to ${order_code}:`,
+            result.error_code
+          );
+        }
+      }).catch((error) => {
+        console.error(`Failed to confirm bank payment for ${order_code}:`, error);
+      });
     }
-    res.json({ success: true, order_code: String(order_code) });
   } catch (dbError) {
     if (client) {
       await client.query('ROLLBACK');
